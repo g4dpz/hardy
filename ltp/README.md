@@ -32,6 +32,7 @@ LTP splits data blocks into segments transmitted over an unreliable link, using 
 - **Export sessions** — block segmentation, configurable intermediate checkpoints, timer-driven retransmission, and max-checkpoint cancellation
 - **Import sessions** — segment reassembly with extent tracking, deferred report generation, colour validation, and max-size enforcement
 - **Green data** — best-effort delivery path with no timers or reports
+- **Timer suspension/resumption** — RFC 5326 §6.5/§6.6 compliant timer management for scheduled link outages (TVR integration)
 - **No runtime dependency** — uses only `tokio::time` for timer representation; no spawned tasks
 
 ## Usage
@@ -64,6 +65,7 @@ Property tests verify:
 - Segment encode/decode round-trip for all segment types
 - Export session checkpoint serial monotonicity and retransmission coverage
 - Import session block delivery and extent map invariants
+- Timer suspend/resume round-trip preservation of remaining durations
 
 ## Documentation
 

@@ -432,14 +432,37 @@ tracing   = { version = "0.1", default-features = false }
 proptest  = "1"
 ```
 
-## 13. Out of Scope (Future Work)
+## 13. TVR Integration (Timer Suspension/Resumption)
+
+The LTP engine supports RFC 5326 §6.5/§6.6 timer suspension and resumption for integration with Hardy's Time-Variant Routing (TVR) agent. When a scheduled contact window closes, the CLA layer calls `suspend_timers()` on active export sessions; when the window reopens, it calls `resume_timers()` with the recorded remaining durations.
+
+### 13.1. Action Types
+
+| Action | Description |
+| --- | --- |
+| `SuspendTimer { checkpoint_serial }` | Suspend the timer for this checkpoint; caller records remaining duration |
+| `ResumeTimer { checkpoint_serial, remaining }` | Resume a suspended timer with the given remaining duration |
+
+### 13.2. Session State
+
+The `ExportSession` tracks:
+- `active_timers: HashSet<u64>` — checkpoint serials with running timers
+- `timers_suspended: bool` — prevents double-suspend and gates resume
+
+### 13.3. Invariants
+
+- `suspend_timers()` is idempotent (no-op if already suspended or session is complete/cancelled)
+- `resume_timers()` skips checkpoint serials no longer in `active_timers` (handles cancellation during suspension)
+- Green sessions have no timers and are unaffected by suspend/resume
+
+## 14. Out of Scope (Future Work)
 
 - **LTP extensions** — Header/trailer extensions are parsed and skipped but not processed
 - **Security extensions** — LTP authentication (RFC 5327) is not implemented
 - **Mixed red/green blocks** — Currently a block is entirely red or entirely green
 - **Multiple client service IDs** — Only ID 1 (Bundle Protocol) is supported
 
-## 14. References
+## 15. References
 
 | Reference | Title |
 | --- | --- |

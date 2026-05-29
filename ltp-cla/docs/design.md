@@ -457,7 +457,72 @@ The wire format and session semantics are compatible with:
 - **HDTN** (NASA GRC high-rate DTN implementation)
 - Any RFC 5326-compliant LTP implementation
 
-## 15. Out of Scope (Future Work)
+## 15. TVR Integration
+
+The LTP CLA integrates with Hardy's Time-Variant Routing (TVR) agent to implement RFC 5326 §6.5/§6.6 timer suspension and resumption during scheduled contact window transitions.
+
+### 15.1. Link State Machine
+
+The span maintains a `LinkState` enum replacing the previous boolean:
+
+```
+Up → DownTvr (TVR contact close)
+Up → DownPing (ping timeout)
+DownTvr → Up (TVR contact open)
+DownPing → Up (link-up event or ping CAS received)
+DownPing → DownTvr (TVR contact close overrides)
+```
+
+### 15.2. Timer Suspension (§6.5)
+
+When a link-down event is received (TVR or ping):
+1. All active export retransmission timers are suspended (abort handles, record remaining durations)
+2. All active import report retransmission timers are suspended
+3. All import session inactivity timers are suspended
+4. Suspended timer state is stored in per-span `HashMap<u64, Duration>` maps
+
+### 15.3. Timer Resumption (§6.6)
+
+When a link-up event is received:
+1. Export timers are resumed via `session.resume_timers()` with recorded durations
+2. Import report timers are respawned with recorded durations
+3. Inactivity timers are respawned with recorded durations
+4. All suspended timer maps are cleared
+
+### 15.4. Outbound Segment Queuing
+
+During link-down, outbound segments are queued in a bounded FIFO (`OutboundQueue`):
+- Maximum size configurable via `link_down_queue_max_bytes` (default: 10 MB)
+- Oldest-first eviction when capacity is exceeded
+- Queue is flushed in FIFO order on link-up with rate control applied
+
+### 15.5. Dynamic Rate Control
+
+Link-up events from TVR may carry bandwidth information. When `tvr_rate_update` is enabled, the span's token bucket rate limiter is updated to match the contact's available capacity.
+
+### 15.6. Ping Coexistence
+
+- TVR link-down suppresses ping probes (no transmissions into a known-dead link)
+- Ping-based link failure during an active contact triggers the same suspension logic
+- Link-up resets ping detection state and restarts the periodic ping timer
+
+### 15.7. Configuration
+
+| Parameter | Description | Default |
+| --- | --- | --- |
+| `tvr_timer_suspension` | Enable timer suspension on link events | true |
+| `link_down_queue_max_bytes` | Max outbound queue size during link-down | 10 MB |
+| `tvr_rate_update` | Update rate limiter from contact bandwidth | true |
+
+### 15.8. Metrics
+
+| Metric | Description |
+| --- | --- |
+| `ltp.tvr.link_down` | Counter: link-down transitions |
+| `ltp.tvr.link_up` | Counter: link-up transitions |
+| `ltp.tvr.queue_bytes` | Gauge: current outbound queue size per span |
+
+## 16. Out of Scope (Future Work)
 
 - **Non-UDP transports** — LTP over CCSDS, SCPS, etc.
 - **LTP security extensions** — RFC 5327 authentication and integrity
@@ -467,7 +532,7 @@ The wire format and session semantics are compatible with:
 - **Adaptive rate control** — Currently static per-span
 - **Multiple client service IDs** — Only ID 1 (Bundle Protocol) is supported
 
-## 16. Dependencies
+## 17. Dependencies
 
 ```toml
 [dependencies]
@@ -484,7 +549,7 @@ metrics      = "0.24"
 serde        = { version = "1", features = ["derive"], optional = true }
 ```
 
-## 17. References
+## 18. References
 
 | Reference | Title |
 | --- | --- |

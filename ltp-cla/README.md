@@ -37,6 +37,7 @@ Designed for deep-space and challenged network scenarios, the adapter supports c
 - **Link health monitoring** — ping-based liveness detection with configurable intervals and timeouts
 - **Session recreation prevention** — history-based deduplication to reject stale segments
 - **Deferred reports** — configurable delay before generating reception reports to batch acknowledgements
+- **TVR integration** — timer suspension/resumption on scheduled contact window transitions (RFC 5326 §6.5/§6.6), outbound segment queuing during link-down, and dynamic rate control updates from contact bandwidth
 - **Metrics** — OpenTelemetry-compatible counters for sessions, segments, and throughput
 - Feature flag: `serde` — enables serialization for configuration structs
 
@@ -72,6 +73,9 @@ Key span configuration options:
 | `checkpoint_every_n` | Intermediate checkpoint interval (segments), 0 = EOB only | 0 |
 | `ping_interval_secs` | Link liveness ping interval, 0 = disabled | 0 |
 | `defer_report_ms` | Delay before generating reports (ms), 0 = immediate | 0 |
+| `tvr_timer_suspension` | Suspend timers on TVR link events (RFC 5326 §6.5/§6.6) | true |
+| `link_down_queue_max_bytes` | Max outbound queue size during link-down (bytes) | 10 MB |
+| `tvr_rate_update` | Update rate limiter from TVR contact bandwidth | true |
 
 ## Testing
 
@@ -86,11 +90,12 @@ cargo test -p hardy-ltp-cla --test end_to_end --test full_stack_test --test luna
 ```
 
 Test suites:
-- **Unit tests** — span logic, aggregation buffer, rate control, session management
-- **Property tests** — session number monotonicity, rate invariants, recreation prevention
+- **Unit tests** — span logic, aggregation buffer, rate control, session management, TVR link state transitions
+- **Property tests** — session number monotonicity, rate invariants, recreation prevention, queue FIFO ordering, timer suspend/resume, link state idempotency
 - **End-to-end** — full LTP transfer of 100 KB and 1 MB payloads over localhost UDP
 - **Full-stack** — BPv7 bundles encoded, transported over LTP, and delivered to a sink
 - **Lunar link** — simulated deep-space scenario with realistic OWLT and rate constraints
+- **TVR integration** — contact close/open flows, timer suspension/resumption, rate-limited queue flush
 
 ## Documentation
 

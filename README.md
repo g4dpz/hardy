@@ -76,7 +76,7 @@ Hardy is a modular implementation of the Bundle Protocol Version 7 (BPv7) as def
 |-------|-------------|
 | [**`hardy-tcpclv4`**](./tcpclv4/) | RFC 9174 TCPCLv4 implementation with TLS support, session management, and structured logging. |
 | [**`hardy-ltp`**](./ltp/) | RFC 5326 Licklider Transmission Protocol (LTP) engine library with SDNV encoding, segment codec, and session management for reliable deep-space links. |
-| [**`hardy-ltp-cla`**](./ltp-cla/) | LTP convergence layer adapter integrating the LTP engine with the BPA for UDP-based bundle transport over high-delay links. |
+| [**`hardy-ltp-cla`**](./ltp-cla/) | LTP convergence layer adapter integrating the LTP engine with the BPA for UDP-based bundle transport over high-delay links. Supports TVR-driven timer suspension and dynamic rate control for scheduled contacts. |
 | [**`hardy-file-cla`**](./file-cla/) | File-system-based CLA for bundle exchange via watched directories. |
 | [**`hardy-bibe`**](./bibe/) | Bundle-in-Bundle Encapsulation (BIBE) for tunneling bundles through intermediate networks. |
 
