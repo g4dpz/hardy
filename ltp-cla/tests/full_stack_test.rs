@@ -413,7 +413,10 @@ async fn full_stack_multiple_bpv7_bundles_aggregated() {
         );
     }
 
-    eprintln!("--- All {} BPv7 bundles delivered and verified ---", bundles.len());
+    eprintln!(
+        "--- All {} BPv7 bundles delivered and verified ---",
+        bundles.len()
+    );
 }
 
 /// Send a large BPv7 bundle (64 KB payload) that requires multi-segment LTP
@@ -479,6 +482,8 @@ async fn full_stack_large_bpv7_bundle_multi_segment() {
         "Payload block data range should be non-empty"
     );
 
-    eprintln!("--- Large BPv7 bundle ({} bytes) delivered and verified ---", bundle_bytes.len());
+    eprintln!(
+        "--- Large BPv7 bundle ({} bytes) delivered and verified ---",
+        bundle_bytes.len()
+    );
 }
-

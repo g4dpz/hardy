@@ -466,7 +466,9 @@ pub fn decode(buf: &mut impl Buf) -> Result<Segment, SegmentError> {
 
         SegmentType::ReportAck => decode_report_ack(buf, session_id)?,
 
-        SegmentType::CancelFromSender => decode_cancel(buf, session_id, CancelDirection::FromSender)?,
+        SegmentType::CancelFromSender => {
+            decode_cancel(buf, session_id, CancelDirection::FromSender)?
+        }
 
         SegmentType::CancelAckToSender => Segment::CancelAck {
             session_id,
@@ -530,7 +532,10 @@ fn decode_data_segment(
 }
 
 /// Decodes a report segment body (type 8).
-fn decode_report_segment(buf: &mut impl Buf, session_id: SessionId) -> Result<Segment, SegmentError> {
+fn decode_report_segment(
+    buf: &mut impl Buf,
+    session_id: SessionId,
+) -> Result<Segment, SegmentError> {
     let report_serial = sdnv::decode(buf)?;
     let checkpoint_serial = sdnv::decode(buf)?;
     let upper_bound = sdnv::decode(buf)?;
@@ -601,7 +606,10 @@ mod tests {
     #[test]
     fn segment_type_from_u8_valid() {
         assert_eq!(SegmentType::try_from(0).unwrap(), SegmentType::RedData);
-        assert_eq!(SegmentType::try_from(1).unwrap(), SegmentType::RedCheckpoint);
+        assert_eq!(
+            SegmentType::try_from(1).unwrap(),
+            SegmentType::RedCheckpoint
+        );
         assert_eq!(SegmentType::try_from(2).unwrap(), SegmentType::RedEorp);
         assert_eq!(SegmentType::try_from(3).unwrap(), SegmentType::RedEob);
         assert_eq!(SegmentType::try_from(4).unwrap(), SegmentType::GreenData);
@@ -628,14 +636,8 @@ mod tests {
 
     #[test]
     fn segment_type_from_u8_invalid() {
-        assert_eq!(
-            SegmentType::try_from(5),
-            Err(SegmentError::UnknownType(5))
-        );
-        assert_eq!(
-            SegmentType::try_from(6),
-            Err(SegmentError::UnknownType(6))
-        );
+        assert_eq!(SegmentType::try_from(5), Err(SegmentError::UnknownType(5)));
+        assert_eq!(SegmentType::try_from(6), Err(SegmentError::UnknownType(6)));
         assert_eq!(
             SegmentType::try_from(10),
             Err(SegmentError::UnknownType(10))
@@ -1520,10 +1522,7 @@ mod tests {
         // Type code 5 is not a valid segment type
         let data = [0x05, 0x01, 0x01, 0x00];
         let mut buf = &data[..];
-        assert_eq!(
-            decode(&mut buf).unwrap_err(),
-            SegmentError::UnknownType(5)
-        );
+        assert_eq!(decode(&mut buf).unwrap_err(), SegmentError::UnknownType(5));
     }
 
     #[test]

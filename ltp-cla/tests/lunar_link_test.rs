@@ -89,8 +89,6 @@ impl CaptureSink {
             }
         }
     }
-
-
 }
 
 #[async_trait]
@@ -353,7 +351,12 @@ impl LunarLink {
 
         let satellite_recv = tokio::spawn(receive_loop(satellite_socket, satellite_spans));
 
-        let handles = vec![proxy_a_to_sat, proxy_b_to_ground, ground_recv, satellite_recv];
+        let handles = vec![
+            proxy_a_to_sat,
+            proxy_b_to_ground,
+            ground_recv,
+            satellite_recv,
+        ];
 
         Self {
             ground_span,
@@ -384,8 +387,12 @@ fn print_mission_banner() {
         "    One-way light time: {}ms (simulated, real: {}ms)",
         SIMULATED_OWLT_MS, REAL_OWLT_MS
     );
-    eprintln!("    Retransmit timeout: 2 × ({} + {}) = {}ms",
-        REAL_OWLT_MS, MARGIN_MS, 2 * (REAL_OWLT_MS + MARGIN_MS));
+    eprintln!(
+        "    Retransmit timeout: 2 × ({} + {}) = {}ms",
+        REAL_OWLT_MS,
+        MARGIN_MS,
+        2 * (REAL_OWLT_MS + MARGIN_MS)
+    );
     eprintln!("    Link rate: {} kbps", LINK_RATE_BPS / 1000);
     eprintln!("    Max segment size: {} bytes", MAX_SEGMENT_SIZE);
     eprintln!();
@@ -414,8 +421,11 @@ async fn lunar_link_command_uplink() {
     let command_bytes = Bytes::from(command.clone());
 
     let t0 = Instant::now();
-    eprintln!("[T+{:.3}s] Ground Station: sending command ({} bytes)",
-        t0.elapsed().as_secs_f64(), command_bytes.len());
+    eprintln!(
+        "[T+{:.3}s] Ground Station: sending command ({} bytes)",
+        t0.elapsed().as_secs_f64(),
+        command_bytes.len()
+    );
 
     // Inject into ground station's aggregation buffer and flush.
     let block = {
@@ -424,24 +434,31 @@ async fn lunar_link_command_uplink() {
         agg.flush().expect("buffer should have data after append")
     };
 
-    eprintln!("[T+{:.3}s] Ground Station: export session created, 1 segment",
-        t0.elapsed().as_secs_f64());
+    eprintln!(
+        "[T+{:.3}s] Ground Station: export session created, 1 segment",
+        t0.elapsed().as_secs_f64()
+    );
 
     // Create export session — sends data segments via UDP through the delay proxy.
     link.ground_span.create_export_session(block).await;
 
     // Wait for delivery at the satellite.
     // Expected: ~50ms one-way for data, then satellite sends report back.
-    let delivered = link.satellite_sink
+    let delivered = link
+        .satellite_sink
         .wait_for_bundle(Duration::from_secs(5))
         .await
         .expect("Command should be delivered to satellite");
 
     let delivery_time = t0.elapsed();
-    eprintln!("[T+{:.3}s] Satellite: received data segment, created import session",
-        delivery_time.as_secs_f64());
-    eprintln!("[T+{:.3}s] Satellite: block complete, delivering command",
-        delivery_time.as_secs_f64());
+    eprintln!(
+        "[T+{:.3}s] Satellite: received data segment, created import session",
+        delivery_time.as_secs_f64()
+    );
+    eprintln!(
+        "[T+{:.3}s] Satellite: block complete, delivering command",
+        delivery_time.as_secs_f64()
+    );
 
     // Verify the command arrived intact.
     assert_eq!(
@@ -460,22 +477,30 @@ async fn lunar_link_command_uplink() {
     // Wait a bit more for the report-ack cycle to complete (another OWLT for report back).
     tokio::time::sleep(Duration::from_millis(SIMULATED_OWLT_MS + 50)).await;
     let rtt_time = t0.elapsed();
-    eprintln!("[T+{:.3}s] Ground Station: received report-ack, session complete",
-        rtt_time.as_secs_f64());
+    eprintln!(
+        "[T+{:.3}s] Ground Station: received report-ack, session complete",
+        rtt_time.as_secs_f64()
+    );
 
-    eprintln!("--- Command delivered successfully (delivery: ~{}ms, RTT: ~{}ms) ---",
-        delivery_time.as_millis(), rtt_time.as_millis());
+    eprintln!(
+        "--- Command delivered successfully (delivery: ~{}ms, RTT: ~{}ms) ---",
+        delivery_time.as_millis(),
+        rtt_time.as_millis()
+    );
 
     // Verify retransmit timeout is configured correctly.
     let expected_retransmit = Duration::from_millis(2 * (REAL_OWLT_MS + MARGIN_MS));
     let actual_retransmit = link.ground_span.compute_retransmit_timeout();
     assert_eq!(
-        actual_retransmit, expected_retransmit,
+        actual_retransmit,
+        expected_retransmit,
         "Retransmit timeout should be 2×(OWLT+margin) = {}ms",
         expected_retransmit.as_millis()
     );
-    eprintln!("    Retransmit timeout correctly configured: {}ms (won't fire prematurely)",
-        actual_retransmit.as_millis());
+    eprintln!(
+        "    Retransmit timeout correctly configured: {}ms (won't fire prematurely)",
+        actual_retransmit.as_millis()
+    );
 
     eprintln!();
     link.shutdown();
@@ -512,8 +537,12 @@ async fn lunar_link_telemetry_downlink() {
     let expected_segments = (framed_size + MAX_SEGMENT_SIZE - 1) / MAX_SEGMENT_SIZE;
 
     let t0 = Instant::now();
-    eprintln!("[T+{:.3}s] Satellite: sending telemetry ({} bytes, ~{} segments)",
-        t0.elapsed().as_secs_f64(), telemetry_size, expected_segments);
+    eprintln!(
+        "[T+{:.3}s] Satellite: sending telemetry ({} bytes, ~{} segments)",
+        t0.elapsed().as_secs_f64(),
+        telemetry_size,
+        expected_segments
+    );
 
     // Inject into satellite's aggregation buffer and flush.
     let block = {
@@ -522,28 +551,38 @@ async fn lunar_link_telemetry_downlink() {
         agg.flush().expect("buffer should have data after append")
     };
 
-    eprintln!("[T+{:.3}s] Satellite: export session created, {} segments queued",
-        t0.elapsed().as_secs_f64(), expected_segments);
+    eprintln!(
+        "[T+{:.3}s] Satellite: export session created, {} segments queued",
+        t0.elapsed().as_secs_f64(),
+        expected_segments
+    );
 
     // Create export session — sends all segments through the delay proxy.
     link.satellite_span.create_export_session(block).await;
 
     // Wait for delivery at the ground station.
     // All segments travel through the delay proxy (~50ms), then reassembly happens.
-    let delivered = link.ground_sink
+    let delivered = link
+        .ground_sink
         .wait_for_bundle(Duration::from_secs(10))
         .await
         .expect("Telemetry should be delivered to ground station");
 
     let delivery_time = t0.elapsed();
-    eprintln!("[T+{:.3}s] Ground Station: all segments received, block reassembled",
-        delivery_time.as_secs_f64());
-    eprintln!("[T+{:.3}s] Ground Station: telemetry delivered ({} bytes)",
-        delivery_time.as_secs_f64(), delivered.len());
+    eprintln!(
+        "[T+{:.3}s] Ground Station: all segments received, block reassembled",
+        delivery_time.as_secs_f64()
+    );
+    eprintln!(
+        "[T+{:.3}s] Ground Station: telemetry delivered ({} bytes)",
+        delivery_time.as_secs_f64(),
+        delivered.len()
+    );
 
     // Verify the telemetry arrived intact.
     assert_eq!(
-        delivered.len(), telemetry_bytes.len(),
+        delivered.len(),
+        telemetry_bytes.len(),
         "Delivered telemetry size should match original"
     );
     assert_eq!(
@@ -562,13 +601,21 @@ async fn lunar_link_telemetry_downlink() {
     // Wait for report-ack cycle.
     tokio::time::sleep(Duration::from_millis(SIMULATED_OWLT_MS + 50)).await;
     let rtt_time = t0.elapsed();
-    eprintln!("[T+{:.3}s] Satellite: received report-ack, session complete",
-        rtt_time.as_secs_f64());
+    eprintln!(
+        "[T+{:.3}s] Satellite: received report-ack, session complete",
+        rtt_time.as_secs_f64()
+    );
 
     eprintln!("--- Telemetry delivered successfully ---");
-    eprintln!("    Payload: {} bytes in {} segments", telemetry_size, expected_segments);
-    eprintln!("    Delivery time: ~{}ms (includes {}ms OWLT)",
-        delivery_time.as_millis(), SIMULATED_OWLT_MS);
+    eprintln!(
+        "    Payload: {} bytes in {} segments",
+        telemetry_size, expected_segments
+    );
+    eprintln!(
+        "    Delivery time: ~{}ms (includes {}ms OWLT)",
+        delivery_time.as_millis(),
+        SIMULATED_OWLT_MS
+    );
     eprintln!("    Full RTT: ~{}ms", rtt_time.as_millis());
 
     eprintln!();
@@ -605,9 +652,18 @@ async fn lunar_link_bidirectional() {
     let telemetry_bytes = Bytes::from(telemetry.clone());
 
     let t0 = Instant::now();
-    eprintln!("[T+{:.3}s] Starting bidirectional transfer:", t0.elapsed().as_secs_f64());
-    eprintln!("    Command uplink: {} bytes (ground → satellite)", command_bytes.len());
-    eprintln!("    Telemetry downlink: {} bytes (satellite → ground)", telemetry_bytes.len());
+    eprintln!(
+        "[T+{:.3}s] Starting bidirectional transfer:",
+        t0.elapsed().as_secs_f64()
+    );
+    eprintln!(
+        "    Command uplink: {} bytes (ground → satellite)",
+        command_bytes.len()
+    );
+    eprintln!(
+        "    Telemetry downlink: {} bytes (satellite → ground)",
+        telemetry_bytes.len()
+    );
 
     // Prepare both blocks.
     let command_block = {
@@ -631,8 +687,10 @@ async fn lunar_link_bidirectional() {
         satellite_span.create_export_session(telemetry_block),
     );
 
-    eprintln!("[T+{:.3}s] Both export sessions created, segments in flight",
-        t0.elapsed().as_secs_f64());
+    eprintln!(
+        "[T+{:.3}s] Both export sessions created, segments in flight",
+        t0.elapsed().as_secs_f64()
+    );
 
     // Wait for both deliveries.
     let (command_delivered, telemetry_delivered) = tokio::join!(
@@ -642,28 +700,34 @@ async fn lunar_link_bidirectional() {
 
     let delivery_time = t0.elapsed();
 
-    let command_delivered = command_delivered
-        .expect("Command should be delivered to satellite");
-    let telemetry_delivered = telemetry_delivered
-        .expect("Telemetry should be delivered to ground station");
+    let command_delivered = command_delivered.expect("Command should be delivered to satellite");
+    let telemetry_delivered =
+        telemetry_delivered.expect("Telemetry should be delivered to ground station");
 
-    eprintln!("[T+{:.3}s] Both transfers complete", delivery_time.as_secs_f64());
+    eprintln!(
+        "[T+{:.3}s] Both transfers complete",
+        delivery_time.as_secs_f64()
+    );
 
     // Verify command integrity.
     assert_eq!(
         command_delivered, command_bytes,
         "Command should arrive intact at satellite"
     );
-    eprintln!("    ✓ Command uplink: {} bytes delivered correctly",
-        command_delivered.len());
+    eprintln!(
+        "    ✓ Command uplink: {} bytes delivered correctly",
+        command_delivered.len()
+    );
 
     // Verify telemetry integrity.
     assert_eq!(
         telemetry_delivered, telemetry_bytes,
         "Telemetry should arrive intact at ground station"
     );
-    eprintln!("    ✓ Telemetry downlink: {} bytes delivered correctly",
-        telemetry_delivered.len());
+    eprintln!(
+        "    ✓ Telemetry downlink: {} bytes delivered correctly",
+        telemetry_delivered.len()
+    );
 
     // Verify timing.
     assert!(
@@ -673,8 +737,10 @@ async fn lunar_link_bidirectional() {
         delivery_time.as_millis()
     );
 
-    eprintln!("--- Bidirectional transfer successful (total: ~{}ms) ---",
-        delivery_time.as_millis());
+    eprintln!(
+        "--- Bidirectional transfer successful (total: ~{}ms) ---",
+        delivery_time.as_millis()
+    );
     eprintln!();
 
     link.shutdown();

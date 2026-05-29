@@ -8,9 +8,7 @@ use std::sync::{Arc, OnceLock};
 use bytes::Bytes;
 use hardy_async::CancellationToken;
 use hardy_bpa::async_trait;
-use hardy_bpa::cla::{
-    Cla, ClaAddress, ClaAddressType, ForwardBundleResult, Sink,
-};
+use hardy_bpa::cla::{Cla, ClaAddress, ClaAddressType, ForwardBundleResult, Sink};
 use tokio::net::UdpSocket;
 use tracing::{debug, error, info, warn};
 
@@ -103,9 +101,7 @@ impl Cla for LtpCla {
             spans.insert(engine_id, span);
 
             // Build the CLA address: Private(engine_id as 8-byte big-endian).
-            let addr = ClaAddress::Private(Bytes::copy_from_slice(
-                &engine_id.to_be_bytes(),
-            ));
+            let addr = ClaAddress::Private(Bytes::copy_from_slice(&engine_id.to_be_bytes()));
 
             // Parse node IDs from the span configuration strings.
             let mut node_ids = Vec::new();
@@ -141,10 +137,7 @@ impl Cla for LtpCla {
         let rx_spans = Arc::new(spans.clone());
         let rx_sink = sink.clone();
         tokio::spawn(crate::engine::run_receive_loop(
-            rx_socket,
-            rx_spans,
-            rx_sink,
-            rx_cancel,
+            rx_socket, rx_spans, rx_sink, rx_cancel,
         ));
 
         // Store the inner state.

@@ -4,8 +4,8 @@
 //! for a single LTP link to a remote engine.
 
 use std::collections::{HashMap, VecDeque};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use bytes::{BufMut, Bytes, BytesMut};
@@ -67,13 +67,12 @@ impl AggregationBuffer {
     pub fn append(&mut self, bundle: &[u8]) -> Option<Bytes> {
         let framed_len = 4 + bundle.len();
 
-        let flushed = if !self.buffer.is_empty()
-            && self.buffer.len() + framed_len > self.aggr_size_limit
-        {
-            self.flush()
-        } else {
-            None
-        };
+        let flushed =
+            if !self.buffer.is_empty() && self.buffer.len() + framed_len > self.aggr_size_limit {
+                self.flush()
+            } else {
+                None
+            };
 
         self.buffer.reserve(framed_len);
         self.buffer.put_u32(bundle.len() as u32);
@@ -149,7 +148,10 @@ impl TokenBucket {
     /// This should only be called with `xmit_rate_bps > 0`. When the rate
     /// is zero, the caller should not create a `TokenBucket` at all.
     pub fn new(xmit_rate_bps: u64) -> Self {
-        debug_assert!(xmit_rate_bps > 0, "TokenBucket should not be created with rate 0");
+        debug_assert!(
+            xmit_rate_bps > 0,
+            "TokenBucket should not be created with rate 0"
+        );
         let rate_bytes_per_sec = xmit_rate_bps as f64 / 8.0;
         Self {
             rate_bytes_per_sec,
@@ -415,9 +417,7 @@ impl Span {
             None => 0,
         };
         Self {
-            aggregation: std::sync::Mutex::new(AggregationBuffer::new(
-                config.aggr_size_limit,
-            )),
+            aggregation: std::sync::Mutex::new(AggregationBuffer::new(config.aggr_size_limit)),
             session_counter: AtomicU64::new(1),
             export_sessions: Mutex::new(HashMap::new()),
             import_sessions: Mutex::new(HashMap::new()),
@@ -544,8 +544,7 @@ impl Span {
 
         debug!(
             engine_id = self.config.engine_id,
-            session_number,
-            "created export session"
+            session_number, "created export session"
         );
 
         // Emit metric for export session creation.
@@ -595,7 +594,13 @@ impl Span {
             Some((true, session_id))
         } else if session_state == ExportState::Cancelled {
             self.cleanup_export_session(sessions, session_number);
-            Some((false, SessionId { engine_id: 0, session_number: 0 }))
+            Some((
+                false,
+                SessionId {
+                    engine_id: 0,
+                    session_number: 0,
+                },
+            ))
         } else {
             None
         }
@@ -672,7 +677,8 @@ impl Span {
         self.execute_export_io(segments).await;
 
         // Phase 3: Handle terminal state or spawn timers.
-        self.handle_export_terminal(session_number, timers, terminal_info).await;
+        self.handle_export_terminal(session_number, timers, terminal_info)
+            .await;
     }
 
     /// Handle a retransmission timer expiry for an export session.
@@ -710,7 +716,8 @@ impl Span {
         self.execute_export_io(segments).await;
 
         // Phase 3: Handle terminal state or spawn timers.
-        self.handle_export_terminal(session_number, timers, terminal_info).await;
+        self.handle_export_terminal(session_number, timers, terminal_info)
+            .await;
     }
 
     /// Handle a Cancel-from-Receiver for an export session.
@@ -812,8 +819,7 @@ impl Span {
                 sessions.insert(session_number, state);
                 debug!(
                     engine_id = self.config.engine_id,
-                    session_number,
-                    "created import session"
+                    session_number, "created import session"
                 );
             }
 
@@ -860,8 +866,7 @@ impl Span {
             }
 
             // Extract I/O work and handle CancelTimer while holding the lock.
-            let (segments, blocks, timers) =
-                self.extract_import_actions(state, other_actions);
+            let (segments, blocks, timers) = self.extract_import_actions(state, other_actions);
 
             // Handle deferred report: start a deferral timer.
             if let Some((checkpoint_serial, upper_bound, defer_ms)) = defer_action {
@@ -903,8 +908,7 @@ impl Span {
                         let report_actions = state
                             .session
                             .generate_deferred_report(checkpoint_serial, upper_bound);
-                        let (rs, rb, rt) =
-                            self.extract_import_actions(state, report_actions);
+                        let (rs, rb, rt) = self.extract_import_actions(state, report_actions);
                         deferred_report_segments = rs;
                         deferred_report_blocks = rb;
                         deferred_report_timers = rt;
@@ -919,8 +923,7 @@ impl Span {
                             let duration = Duration::from_millis(defer_ms);
                             let handle = tokio::spawn(async move {
                                 tokio::time::sleep(duration).await;
-                                span.on_deferred_report_timer_expired(session_number)
-                                    .await;
+                                span.on_deferred_report_timer_expired(session_number).await;
                             });
 
                             state.deferred_report = Some(DeferredReport {
@@ -935,10 +938,8 @@ impl Span {
 
             // Check terminal state before deciding on timer spawning.
             let import_state = state.session.state();
-            let is_terminal = matches!(
-                import_state,
-                ImportState::Complete | ImportState::Cancelled
-            );
+            let is_terminal =
+                matches!(import_state, ImportState::Complete | ImportState::Cancelled);
 
             if is_terminal {
                 if import_state == ImportState::Complete {
@@ -969,11 +970,7 @@ impl Span {
     }
 
     /// Handle a received Report-Ack for an import session.
-    pub async fn on_import_report_ack(
-        self: &Arc<Self>,
-        session_number: u64,
-        report_serial: u64,
-    ) {
+    pub async fn on_import_report_ack(self: &Arc<Self>, session_number: u64, report_serial: u64) {
         // Phase 1: Acquire lock, drive state machine, extract actions.
         let (segments, blocks) = {
             let mut sessions = self.import_sessions.lock().await;
@@ -987,8 +984,7 @@ impl Span {
 
             let actions = state.session.on_report_ack(report_serial);
 
-            let (segments, blocks, timers) =
-                self.extract_import_actions(state, actions);
+            let (segments, blocks, timers) = self.extract_import_actions(state, actions);
 
             // Spawn timers while we still have the lock (they only need state.timers).
             if let Some(state) = sessions.get_mut(&session_number) {
@@ -1022,8 +1018,7 @@ impl Span {
 
             let actions = state.session.on_cancel_from_sender(reason);
 
-            let (segments, blocks, _timers) =
-                self.extract_import_actions(state, actions);
+            let (segments, blocks, _timers) = self.extract_import_actions(state, actions);
 
             // Always clean up after cancel.
             self.cleanup_import_session(&mut sessions, session_number);
@@ -1196,8 +1191,7 @@ impl Span {
         // Future: implement report retransmission in the import session SM.
         trace!(
             session_number,
-            report_serial,
-            "import report timer expired (retransmission not yet wired)"
+            report_serial, "import report timer expired (retransmission not yet wired)"
         );
     }
 
@@ -1243,10 +1237,7 @@ impl Span {
     ///
     /// When the deferral timer fires, generates and sends the report with
     /// whatever coverage has been achieved at that point.
-    async fn on_deferred_report_timer_expired(
-        self: &Arc<Self>,
-        session_number: u64,
-    ) {
+    async fn on_deferred_report_timer_expired(self: &Arc<Self>, session_number: u64) {
         // Phase 1: Acquire lock, drive state machine, extract actions.
         let io_work = {
             let mut sessions = self.import_sessions.lock().await;
@@ -1275,15 +1266,12 @@ impl Span {
                 .session
                 .generate_deferred_report(deferred.checkpoint_serial, deferred.upper_bound);
 
-            let (segments, blocks, timers) =
-                self.extract_import_actions(state, report_actions);
+            let (segments, blocks, timers) = self.extract_import_actions(state, report_actions);
 
             // Check terminal state.
             let import_state = state.session.state();
-            let is_terminal = matches!(
-                import_state,
-                ImportState::Complete | ImportState::Cancelled
-            );
+            let is_terminal =
+                matches!(import_state, ImportState::Complete | ImportState::Cancelled);
 
             if is_terminal {
                 if import_state == ImportState::Complete {
@@ -1326,8 +1314,7 @@ impl Span {
 
             debug!(
                 engine_id = self.config.engine_id,
-                session_number,
-                "import session cancelled due to inactivity"
+                session_number, "import session cancelled due to inactivity"
             );
 
             // Build Cancel-from-Receiver segment with reason ByEngine.
@@ -1365,11 +1352,7 @@ impl Span {
     ///
     /// The session is retained for `2 × max_retransmissions × retransmit_timeout + 10s`
     /// to handle late Report Segments with Report-Ack responses.
-    async fn retain_closed_export(
-        self: &Arc<Self>,
-        session_number: u64,
-        session_id: SessionId,
-    ) {
+    async fn retain_closed_export(self: &Arc<Self>, session_number: u64, session_id: SessionId) {
         let retransmit_timeout = self.compute_retransmit_timeout();
         let retention_duration = retransmit_timeout
             .saturating_mul(2 * self.config.max_retransmissions)
@@ -1379,7 +1362,8 @@ impl Span {
         let span = Arc::clone(self);
         let timer_handle = tokio::spawn(async move {
             tokio::time::sleep(retention_duration).await;
-            span.on_closed_export_retention_expired(session_number).await;
+            span.on_closed_export_retention_expired(session_number)
+                .await;
         });
 
         let closed_state = ClosedExportState {
@@ -1445,8 +1429,7 @@ impl Span {
                 removed.retention_timer.abort();
                 debug!(
                     engine_id = self.config.engine_id,
-                    session_number,
-                    "discarded closed export (response counter exhausted)"
+                    session_number, "discarded closed export (response counter exhausted)"
                 );
             }
 
@@ -1461,16 +1444,12 @@ impl Span {
     /// Handle retention timer expiry for a closed export session.
     ///
     /// Discards the closed export regardless of remaining response counter.
-    async fn on_closed_export_retention_expired(
-        self: &Arc<Self>,
-        session_number: u64,
-    ) {
+    async fn on_closed_export_retention_expired(self: &Arc<Self>, session_number: u64) {
         let mut closed = self.closed_exports.lock().await;
         if closed.remove(&session_number).is_some() {
             debug!(
                 engine_id = self.config.engine_id,
-                session_number,
-                "discarded closed export (retention period expired)"
+                session_number, "discarded closed export (retention period expired)"
             );
         }
     }
@@ -1683,9 +1662,8 @@ impl Span {
     /// Calls `sink.remove_peer()` with the span's CLA address so the BPA
     /// removes routing entries and can re-route bundles through other paths.
     async fn notify_bpa_link_down(&self) {
-        let peer_addr = ClaAddress::Private(Bytes::copy_from_slice(
-            &self.config.engine_id.to_be_bytes(),
-        ));
+        let peer_addr =
+            ClaAddress::Private(Bytes::copy_from_slice(&self.config.engine_id.to_be_bytes()));
 
         if let Err(e) = self.sink.remove_peer(&peer_addr).await {
             error!(
@@ -1768,9 +1746,8 @@ impl Span {
         );
 
         // Build the CLA address for this peer.
-        let peer_addr = ClaAddress::Private(Bytes::copy_from_slice(
-            &self.config.engine_id.to_be_bytes(),
-        ));
+        let peer_addr =
+            ClaAddress::Private(Bytes::copy_from_slice(&self.config.engine_id.to_be_bytes()));
 
         for (i, bundle) in result.bundles.iter().enumerate() {
             if bundle.is_empty() {
@@ -1812,8 +1789,7 @@ impl Span {
             }
             debug!(
                 engine_id = self.config.engine_id,
-                session_number,
-                "cleaned up export session"
+                session_number, "cleaned up export session"
             );
         }
     }
@@ -1848,8 +1824,7 @@ impl Span {
 
             debug!(
                 engine_id = self.config.engine_id,
-                session_number,
-                "cleaned up import session"
+                session_number, "cleaned up import session"
             );
         }
     }
@@ -2147,8 +2122,7 @@ mod tests {
         // We can't easily create an AbortHandle without a runtime, so we
         // verify the retention duration computation instead.
         let retransmit_cycle_secs = 60u64;
-        let retention_secs =
-            2 * max_retransmissions as u64 * retransmit_cycle_secs + 10;
+        let retention_secs = 2 * max_retransmissions as u64 * retransmit_cycle_secs + 10;
         assert_eq!(retention_secs, 1210);
     }
 
@@ -2598,24 +2572,30 @@ mod tests {
                 defer_report_ms: 0,
             };
             let session_1 = ImportSession::new(session_id_1, import_config.clone());
-            sessions.insert(10, ImportSessionState {
-                session: session_1,
-                timers: HashMap::new(),
-                inactivity_timer: None,
-                deferred_report: None,
-            });
+            sessions.insert(
+                10,
+                ImportSessionState {
+                    session: session_1,
+                    timers: HashMap::new(),
+                    inactivity_timer: None,
+                    deferred_report: None,
+                },
+            );
 
             let session_id_2 = SessionId {
                 engine_id: 2,
                 session_number: 20,
             };
             let session_2 = ImportSession::new(session_id_2, import_config);
-            sessions.insert(20, ImportSessionState {
-                session: session_2,
-                timers: HashMap::new(),
-                inactivity_timer: None,
-                deferred_report: None,
-            });
+            sessions.insert(
+                20,
+                ImportSessionState {
+                    session: session_2,
+                    timers: HashMap::new(),
+                    inactivity_timer: None,
+                    deferred_report: None,
+                },
+            );
         }
 
         // Verify we have 2 sessions.
@@ -2625,10 +2605,10 @@ mod tests {
         span.on_import_data_segment(
             30, // new session number
             SegmentType::RedData,
-            1,   // client_service_id
-            0,   // offset
+            1,           // client_service_id
+            0,           // offset
             &[0u8; 100], // data
-            None, // no checkpoint
+            None,        // no checkpoint
         )
         .await;
 
@@ -2682,15 +2662,8 @@ mod tests {
         let span = Arc::new(Span::new(config, 1, socket, sink));
 
         // Create the first session via on_import_data_segment.
-        span.on_import_data_segment(
-            10,
-            SegmentType::RedData,
-            1,
-            0,
-            &[0u8; 50],
-            None,
-        )
-        .await;
+        span.on_import_data_segment(10, SegmentType::RedData, 1, 0, &[0u8; 50], None)
+            .await;
 
         // Session 10 should exist.
         assert_eq!(span.import_sessions.lock().await.len(), 1);
@@ -2766,29 +2739,15 @@ mod tests {
         }
 
         // Try to create a new import session with session number 42 — should be discarded.
-        span.on_import_data_segment(
-            42,
-            SegmentType::RedData,
-            1,
-            0,
-            &[0u8; 100],
-            None,
-        )
-        .await;
+        span.on_import_data_segment(42, SegmentType::RedData, 1, 0, &[0u8; 100], None)
+            .await;
 
         // Session 42 should NOT have been created.
         assert!(!span.import_sessions.lock().await.contains_key(&42));
 
         // A different session number (43) should still be accepted.
-        span.on_import_data_segment(
-            43,
-            SegmentType::RedData,
-            1,
-            0,
-            &[0u8; 100],
-            None,
-        )
-        .await;
+        span.on_import_data_segment(43, SegmentType::RedData, 1, 0, &[0u8; 100], None)
+            .await;
 
         // Session 43 should have been created.
         assert!(span.import_sessions.lock().await.contains_key(&43));
@@ -2841,15 +2800,8 @@ mod tests {
         // Even if we somehow had a session number in history (shouldn't happen with size 0),
         // the check is skipped entirely when history_size is 0.
         // Just verify that a new session can be created normally.
-        span.on_import_data_segment(
-            42,
-            SegmentType::RedData,
-            1,
-            0,
-            &[0u8; 100],
-            None,
-        )
-        .await;
+        span.on_import_data_segment(42, SegmentType::RedData, 1, 0, &[0u8; 100], None)
+            .await;
 
         assert!(span.import_sessions.lock().await.contains_key(&42));
     }
@@ -2914,12 +2866,15 @@ mod tests {
                 defer_report_ms: 0,
             };
             let session = ImportSession::new(session_id, import_config);
-            sessions.insert(77, ImportSessionState {
-                session,
-                timers: HashMap::new(),
-                inactivity_timer: None,
-                deferred_report: None,
-            });
+            sessions.insert(
+                77,
+                ImportSessionState {
+                    session,
+                    timers: HashMap::new(),
+                    inactivity_timer: None,
+                    deferred_report: None,
+                },
+            );
         }
 
         // Clean up the session — should record session number 77 in history.
@@ -2935,15 +2890,8 @@ mod tests {
         }
 
         // Now try to create a new session with the same number — should be discarded.
-        span.on_import_data_segment(
-            77,
-            SegmentType::RedData,
-            1,
-            0,
-            &[0u8; 50],
-            None,
-        )
-        .await;
+        span.on_import_data_segment(77, SegmentType::RedData, 1, 0, &[0u8; 50], None)
+            .await;
 
         // Session 77 should NOT have been recreated.
         assert!(!span.import_sessions.lock().await.contains_key(&77));
@@ -3001,7 +2949,8 @@ mod tests {
         }
 
         // Session 10 should be blocked.
-        span.on_import_data_segment(10, SegmentType::RedData, 1, 0, &[0u8; 50], None).await;
+        span.on_import_data_segment(10, SegmentType::RedData, 1, 0, &[0u8; 50], None)
+            .await;
         assert!(!span.import_sessions.lock().await.contains_key(&10));
 
         // Now insert session 30 into history — this evicts session 10.
@@ -3011,11 +2960,13 @@ mod tests {
         }
 
         // Session 10 should now be allowed (evicted from history).
-        span.on_import_data_segment(10, SegmentType::RedData, 1, 0, &[0u8; 50], None).await;
+        span.on_import_data_segment(10, SegmentType::RedData, 1, 0, &[0u8; 50], None)
+            .await;
         assert!(span.import_sessions.lock().await.contains_key(&10));
 
         // Session 20 should still be blocked (still in history).
-        span.on_import_data_segment(20, SegmentType::RedData, 1, 0, &[0u8; 50], None).await;
+        span.on_import_data_segment(20, SegmentType::RedData, 1, 0, &[0u8; 50], None)
+            .await;
         assert!(!span.import_sessions.lock().await.contains_key(&20));
     }
 
@@ -3068,15 +3019,8 @@ mod tests {
         let span = Arc::new(Span::new(config, 1, socket, sink));
 
         // Create an import session via data segment.
-        span.on_import_data_segment(
-            10,
-            SegmentType::RedData,
-            1,
-            0,
-            &[0u8; 50],
-            None,
-        )
-        .await;
+        span.on_import_data_segment(10, SegmentType::RedData, 1, 0, &[0u8; 50], None)
+            .await;
 
         // Session should exist and have no inactivity timer.
         let sessions = span.import_sessions.lock().await;
@@ -3129,15 +3073,8 @@ mod tests {
         let span = Arc::new(Span::new(config, 1, socket, sink));
 
         // Create an import session via data segment.
-        span.on_import_data_segment(
-            10,
-            SegmentType::RedData,
-            1,
-            0,
-            &[0u8; 50],
-            None,
-        )
-        .await;
+        span.on_import_data_segment(10, SegmentType::RedData, 1, 0, &[0u8; 50], None)
+            .await;
 
         // Session should exist and have an inactivity timer set.
         let sessions = span.import_sessions.lock().await;
@@ -3190,15 +3127,8 @@ mod tests {
         let span = Arc::new(Span::new(config, 1, socket, sink));
 
         // Create an import session via data segment.
-        span.on_import_data_segment(
-            10,
-            SegmentType::RedData,
-            1,
-            0,
-            &[0u8; 50],
-            None,
-        )
-        .await;
+        span.on_import_data_segment(10, SegmentType::RedData, 1, 0, &[0u8; 50], None)
+            .await;
 
         // Session should exist.
         assert!(span.import_sessions.lock().await.contains_key(&10));
@@ -3255,29 +3185,15 @@ mod tests {
         let span = Arc::new(Span::new(config, 1, socket, sink));
 
         // Create an import session.
-        span.on_import_data_segment(
-            10,
-            SegmentType::RedData,
-            1,
-            0,
-            &[0u8; 50],
-            None,
-        )
-        .await;
+        span.on_import_data_segment(10, SegmentType::RedData, 1, 0, &[0u8; 50], None)
+            .await;
 
         // Wait 1.5 seconds (less than the 2-second limit).
         tokio::time::sleep(Duration::from_millis(1500)).await;
 
         // Send another data segment to reset the timer.
-        span.on_import_data_segment(
-            10,
-            SegmentType::RedData,
-            1,
-            50,
-            &[1u8; 50],
-            None,
-        )
-        .await;
+        span.on_import_data_segment(10, SegmentType::RedData, 1, 50, &[1u8; 50], None)
+            .await;
 
         // Session should still exist (timer was reset).
         assert!(span.import_sessions.lock().await.contains_key(&10));
@@ -3394,15 +3310,8 @@ mod tests {
         let span = Arc::new(Span::new(config, 1, socket, sink));
 
         // Send data at offset 0 (covers [0, 50))
-        span.on_import_data_segment(
-            10,
-            SegmentType::RedData,
-            1,
-            0,
-            &[0xAA; 50],
-            None,
-        )
-        .await;
+        span.on_import_data_segment(10, SegmentType::RedData, 1, 0, &[0xAA; 50], None)
+            .await;
 
         // Send checkpoint at offset 100 (covers [100, 150))
         // Gap at [50, 100) → should defer report
@@ -3412,7 +3321,10 @@ mod tests {
             1,
             100,
             &[0xBB; 50],
-            Some(CheckpointInfo { serial: 1, responding_report_serial: 0 }),
+            Some(CheckpointInfo {
+                serial: 1,
+                responding_report_serial: 0,
+            }),
         )
         .await;
 
@@ -3485,15 +3397,8 @@ mod tests {
         let span = Arc::new(Span::new(config, 1, socket, sink));
 
         // Send data at offset 0 (covers [0, 50))
-        span.on_import_data_segment(
-            10,
-            SegmentType::RedData,
-            1,
-            0,
-            &[0xAA; 50],
-            None,
-        )
-        .await;
+        span.on_import_data_segment(10, SegmentType::RedData, 1, 0, &[0xAA; 50], None)
+            .await;
 
         // Send checkpoint at offset 100 (covers [100, 150))
         // Gap at [50, 100) → should defer report
@@ -3503,7 +3408,10 @@ mod tests {
             1,
             100,
             &[0xBB; 50],
-            Some(CheckpointInfo { serial: 1, responding_report_serial: 0 }),
+            Some(CheckpointInfo {
+                serial: 1,
+                responding_report_serial: 0,
+            }),
         )
         .await;
 
@@ -3515,15 +3423,8 @@ mod tests {
         }
 
         // Now fill the gap [50, 100) — this should trigger immediate report.
-        span.on_import_data_segment(
-            10,
-            SegmentType::RedData,
-            1,
-            50,
-            &[0xCC; 50],
-            None,
-        )
-        .await;
+        span.on_import_data_segment(10, SegmentType::RedData, 1, 50, &[0xCC; 50], None)
+            .await;
 
         // Deferred report should be cleared and report generated immediately.
         {
@@ -3581,15 +3482,8 @@ mod tests {
         let span = Arc::new(Span::new(config, 1, socket, sink));
 
         // Send data at offset 0 (covers [0, 50))
-        span.on_import_data_segment(
-            10,
-            SegmentType::RedData,
-            1,
-            0,
-            &[0xAA; 50],
-            None,
-        )
-        .await;
+        span.on_import_data_segment(10, SegmentType::RedData, 1, 0, &[0xAA; 50], None)
+            .await;
 
         // Send checkpoint at offset 200 (covers [200, 250))
         // Gaps at [50, 200) → should defer report
@@ -3599,7 +3493,10 @@ mod tests {
             1,
             200,
             &[0xBB; 50],
-            Some(CheckpointInfo { serial: 1, responding_report_serial: 0 }),
+            Some(CheckpointInfo {
+                serial: 1,
+                responding_report_serial: 0,
+            }),
         )
         .await;
 
@@ -3615,15 +3512,8 @@ mod tests {
 
         // Send a gap-filling segment [50, 100) — gaps still remain at [100, 200)
         // This should reset the timer.
-        span.on_import_data_segment(
-            10,
-            SegmentType::RedData,
-            1,
-            50,
-            &[0xCC; 50],
-            None,
-        )
-        .await;
+        span.on_import_data_segment(10, SegmentType::RedData, 1, 50, &[0xCC; 50], None)
+            .await;
 
         // Deferred report should still be active (timer was reset, not cleared).
         {
@@ -3702,15 +3592,8 @@ mod tests {
         let span = Arc::new(Span::new(config, 1, socket, sink));
 
         // Send data at offset 0 (covers [0, 50))
-        span.on_import_data_segment(
-            10,
-            SegmentType::RedData,
-            1,
-            0,
-            &[0xAA; 50],
-            None,
-        )
-        .await;
+        span.on_import_data_segment(10, SegmentType::RedData, 1, 0, &[0xAA; 50], None)
+            .await;
 
         // Send checkpoint at offset 100 (covers [100, 150))
         // Gap at [50, 100) but defer_report_ms = 0 → immediate report
@@ -3720,7 +3603,10 @@ mod tests {
             1,
             100,
             &[0xBB; 50],
-            Some(CheckpointInfo { serial: 1, responding_report_serial: 0 }),
+            Some(CheckpointInfo {
+                serial: 1,
+                responding_report_serial: 0,
+            }),
         )
         .await;
 
@@ -3780,15 +3666,8 @@ mod tests {
         let span = Arc::new(Span::new(config, 1, socket, sink));
 
         // Send data at offset 0 (covers [0, 50))
-        span.on_import_data_segment(
-            10,
-            SegmentType::RedData,
-            1,
-            0,
-            &[0xAA; 50],
-            None,
-        )
-        .await;
+        span.on_import_data_segment(10, SegmentType::RedData, 1, 0, &[0xAA; 50], None)
+            .await;
 
         // Send checkpoint at offset 100 (covers [100, 150))
         // Gap at [50, 100) → should defer report
@@ -3798,7 +3677,10 @@ mod tests {
             1,
             100,
             &[0xBB; 50],
-            Some(CheckpointInfo { serial: 1, responding_report_serial: 0 }),
+            Some(CheckpointInfo {
+                serial: 1,
+                responding_report_serial: 0,
+            }),
         )
         .await;
 
@@ -3814,15 +3696,8 @@ mod tests {
 
         // Send a REDUNDANT segment (same data at offset 0, already covered).
         // This should NOT reset the timer since it doesn't fill any gap.
-        span.on_import_data_segment(
-            10,
-            SegmentType::RedData,
-            1,
-            0,
-            &[0xAA; 50],
-            None,
-        )
-        .await;
+        span.on_import_data_segment(10, SegmentType::RedData, 1, 0, &[0xAA; 50], None)
+            .await;
 
         // Deferred report should still be active.
         {

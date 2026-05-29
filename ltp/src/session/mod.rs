@@ -6,9 +6,7 @@
 pub mod export;
 pub mod import;
 
-pub use import::{
-    ExtentMap, ImportAction, ImportConfig, ImportSession, ImportState, SegmentColor,
-};
+pub use import::{ExtentMap, ImportAction, ImportConfig, ImportSession, ImportState, SegmentColor};
 
 /// Uniquely identifies an LTP session as the combination of the sender's
 /// engine ID and a per-engine session number.

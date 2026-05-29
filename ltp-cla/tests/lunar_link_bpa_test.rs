@@ -169,7 +169,7 @@ async fn lunar_link_bpa_command_to_spacecraft() {
             max_retransmissions: 5,
             retransmit_cycle_secs: 10,
             aggr_size_limit: 65536,
-            aggr_time_limit_secs: 0, // immediate flush
+            aggr_time_limit_secs: 0,         // immediate flush
             one_way_light_time_ms: Some(50), // 50ms for fast test
             one_way_margin_time_ms: 20,
             ..Default::default()
@@ -293,8 +293,14 @@ async fn lunar_link_bpa_telemetry_to_ground() {
 
     eprintln!();
     eprintln!("=== LunarLink Full-BPA Telemetry Test ===");
-    eprintln!("    Ground Station: ipn:2.0 (LTP port {})", GROUND_LTP_PORT + 10);
-    eprintln!("    Spacecraft: ipn:3.0 (LTP port {})", SPACECRAFT_LTP_PORT + 10);
+    eprintln!(
+        "    Ground Station: ipn:2.0 (LTP port {})",
+        GROUND_LTP_PORT + 10
+    );
+    eprintln!(
+        "    Spacecraft: ipn:3.0 (LTP port {})",
+        SPACECRAFT_LTP_PORT + 10
+    );
     eprintln!();
 
     // Use offset ports to avoid conflict with the other test running in parallel.

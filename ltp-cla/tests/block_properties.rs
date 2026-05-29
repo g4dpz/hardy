@@ -13,10 +13,7 @@ use proptest::prelude::*;
 
 /// Strategy: generate 1..=20 non-empty byte sequences, each 1..=200 bytes.
 fn arb_bundle_sequence() -> impl Strategy<Value = Vec<Vec<u8>>> {
-    prop::collection::vec(
-        prop::collection::vec(any::<u8>(), 1..=200),
-        1..=20,
-    )
+    prop::collection::vec(prop::collection::vec(any::<u8>(), 1..=200), 1..=20)
 }
 
 proptest! {

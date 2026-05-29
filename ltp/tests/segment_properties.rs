@@ -4,9 +4,7 @@
 //! functions using the `proptest` framework.
 
 use bytes::{Bytes, BytesMut};
-use hardy_ltp::segment::{
-    self, CheckpointInfo, ReceptionClaim, Segment, SegmentType,
-};
+use hardy_ltp::segment::{self, CheckpointInfo, ReceptionClaim, Segment, SegmentType};
 use hardy_ltp::session::{CancelDirection, CancelReason, SessionId};
 use proptest::prelude::*;
 
@@ -132,22 +130,19 @@ fn arb_report_segment() -> impl Strategy<Value = Segment> {
 
                 // Generate claims within [lower_bound, upper_bound)
                 let claims_strategy =
-                    prop::collection::vec(
-                        (0u64..available, 1u64..=available.max(1)),
-                        claim_count,
-                    )
-                    .prop_map(move |raw_claims| {
-                        raw_claims
-                            .into_iter()
-                            .map(|(rel_offset, length)| {
-                                // Ensure claim fits within bounds
-                                let offset = lower_bound + (rel_offset % available);
-                                let max_len = upper_bound.saturating_sub(offset).max(1);
-                                let length = (length % max_len).max(1);
-                                ReceptionClaim { offset, length }
-                            })
-                            .collect::<Vec<_>>()
-                    });
+                    prop::collection::vec((0u64..available, 1u64..=available.max(1)), claim_count)
+                        .prop_map(move |raw_claims| {
+                            raw_claims
+                                .into_iter()
+                                .map(|(rel_offset, length)| {
+                                    // Ensure claim fits within bounds
+                                    let offset = lower_bound + (rel_offset % available);
+                                    let max_len = upper_bound.saturating_sub(offset).max(1);
+                                    let length = (length % max_len).max(1);
+                                    ReceptionClaim { offset, length }
+                                })
+                                .collect::<Vec<_>>()
+                        });
 
                 claims_strategy.prop_map(move |claims| Segment::Report {
                     session_id,
@@ -171,13 +166,16 @@ fn arb_report_ack_segment() -> impl Strategy<Value = Segment> {
 
 /// Strategy for generating a Cancel segment.
 fn arb_cancel_segment() -> impl Strategy<Value = Segment> {
-    (arb_session_id(), arb_cancel_reason(), arb_cancel_direction()).prop_map(
-        |(session_id, reason, direction)| Segment::Cancel {
+    (
+        arb_session_id(),
+        arb_cancel_reason(),
+        arb_cancel_direction(),
+    )
+        .prop_map(|(session_id, reason, direction)| Segment::Cancel {
             session_id,
             reason,
             direction,
-        },
-    )
+        })
 }
 
 /// Strategy for generating a CancelAck segment.

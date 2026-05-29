@@ -19,8 +19,8 @@
 //! Validates: Requirements 34.2
 
 use std::collections::{HashSet, VecDeque};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use hardy_ltp_cla::span::TokenBucket;
 use proptest::prelude::*;
@@ -101,7 +101,6 @@ proptest! {
     }
 }
 
-
 // ---------------------------------------------------------------------------
 // Property 13: Token Bucket Rate Invariant
 // ---------------------------------------------------------------------------
@@ -159,7 +158,6 @@ proptest! {
         }
     }
 }
-
 
 // ---------------------------------------------------------------------------
 // Property 20: Closed Export Response Limit
@@ -254,7 +252,6 @@ proptest! {
         });
     }
 }
-
 
 // ---------------------------------------------------------------------------
 // Property 18: Max Import Sessions Enforcement
@@ -375,7 +372,6 @@ proptest! {
     }
 }
 
-
 // ---------------------------------------------------------------------------
 // Property 16: Session Recreation Prevention
 // ---------------------------------------------------------------------------
@@ -464,7 +460,6 @@ proptest! {
         );
     }
 }
-
 
 // ---------------------------------------------------------------------------
 // Property 21: RTT-Based Timer Computation

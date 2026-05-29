@@ -102,10 +102,7 @@ impl Sink for CaptureSink {
 /// The `spans` map is keyed by the engine_id that appears in incoming segments'
 /// session_id field. For data segments this is the sender's engine ID; for
 /// reports/report-acks it's the original session creator's engine ID.
-async fn test_receive_loop(
-    socket: Arc<UdpSocket>,
-    spans: HashMap<u64, Arc<Span>>,
-) {
+async fn test_receive_loop(socket: Arc<UdpSocket>, spans: HashMap<u64, Arc<Span>>) {
     let mut buf = vec![0u8; 65536];
     loop {
         let (len, _src) = match socket.recv_from(&mut buf).await {
@@ -264,9 +261,7 @@ async fn test_ltp_end_to_end_bundle_delivery() {
     span1.create_export_session(block).await;
 
     // Wait for the bundle to be delivered to Span 2's capture sink.
-    let delivered = capture_sink
-        .wait_for_bundle(Duration::from_secs(5))
-        .await;
+    let delivered = capture_sink.wait_for_bundle(Duration::from_secs(5)).await;
 
     // Clean up: abort receive loops.
     recv1_handle.abort();
@@ -357,8 +352,14 @@ async fn test_ltp_send_file_100kb() {
     let file_data: Vec<u8> = (0..file_size).map(|i| (i % 256) as u8).collect();
     let file_bundle = Bytes::from(file_data.clone());
 
-    eprintln!("--- Sending {} byte payload over LTP (segment size 1400) ---", file_size);
-    eprintln!("--- Expected segments: ~{} ---", (file_size + 4 + 1399) / 1400);
+    eprintln!(
+        "--- Sending {} byte payload over LTP (segment size 1400) ---",
+        file_size
+    );
+    eprintln!(
+        "--- Expected segments: ~{} ---",
+        (file_size + 4 + 1399) / 1400
+    );
 
     // Inject into aggregation buffer and flush.
     let block = {
@@ -395,7 +396,10 @@ async fn test_ltp_send_file_1mb() {
     let file_bundle = Bytes::from(file_data.clone());
 
     eprintln!("--- Sending {} byte (1 MB) payload over LTP ---", file_size);
-    eprintln!("--- Expected segments: ~{} ---", (file_size + 4 + 1399) / 1400);
+    eprintln!(
+        "--- Expected segments: ~{} ---",
+        (file_size + 4 + 1399) / 1400
+    );
 
     let block = {
         let mut agg = span1.aggregation.lock().unwrap();

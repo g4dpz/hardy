@@ -7,9 +7,9 @@ use std::time::Duration;
 
 use bytes::{Bytes, BytesMut};
 
+use super::ExtentMap;
 use crate::segment::{self, CheckpointInfo, ReceptionClaim, Segment, SegmentType};
 use crate::session::{CancelDirection, CancelReason, SessionId};
-use super::ExtentMap;
 
 /// Configuration for an export session.
 #[derive(Debug, Clone)]
@@ -323,7 +323,8 @@ impl ExportSession {
 
         // Record claimed ranges (merge into our acknowledged set)
         for claim in claims {
-            self.acknowledged.insert(claim.offset, claim.offset + claim.length);
+            self.acknowledged
+                .insert(claim.offset, claim.offset + claim.length);
         }
 
         // Check if the entire block is now acknowledged
@@ -378,7 +379,9 @@ impl ExportSession {
                 let is_last_segment_of_last_range =
                     is_last_range && (offset + seg_len as u64) >= *end;
 
-                let data = self.block.slice(offset as usize..(offset as usize + seg_len));
+                let data = self
+                    .block
+                    .slice(offset as usize..(offset as usize + seg_len));
 
                 // The final segment of the final unclaimed range gets a new checkpoint
                 let (seg_type, checkpoint) = if is_last_segment_of_last_range {
@@ -504,7 +507,9 @@ impl ExportSession {
                 let is_last_segment_of_last_range =
                     is_last_range && (offset + seg_len as u64) >= *end;
 
-                let data = self.block.slice(offset as usize..(offset as usize + seg_len));
+                let data = self
+                    .block
+                    .slice(offset as usize..(offset as usize + seg_len));
 
                 // The final segment gets a new checkpoint
                 let (seg_type, checkpoint) = if is_last_segment_of_last_range {
@@ -1136,7 +1141,10 @@ mod tests {
                 let mut reader = &wire[..];
                 let seg = segment::decode(&mut reader).unwrap();
                 if let Segment::Data { checkpoint, .. } = seg {
-                    assert_eq!(checkpoint, None, "Green segments must not have checkpoint info");
+                    assert_eq!(
+                        checkpoint, None,
+                        "Green segments must not have checkpoint info"
+                    );
                 }
             }
         }
@@ -1352,7 +1360,10 @@ mod tests {
             if let ExportAction::SendSegment(wire) = action {
                 let mut reader = &wire[..];
                 let seg = segment::decode(&mut reader).unwrap();
-                if let Segment::Cancel { reason, direction, .. } = seg {
+                if let Segment::Cancel {
+                    reason, direction, ..
+                } = seg
+                {
                     assert_eq!(reason, CancelReason::RetransmitLimitExceeded);
                     assert_eq!(direction, CancelDirection::FromSender);
                     found_cancel = true;
@@ -1388,7 +1399,9 @@ mod tests {
         // Should emit a Cancel segment
         let seg = decode_first_segment(&actions);
         match seg {
-            Segment::Cancel { reason, direction, .. } => {
+            Segment::Cancel {
+                reason, direction, ..
+            } => {
                 assert_eq!(reason, CancelReason::RetransmitLimitExceeded);
                 assert_eq!(direction, CancelDirection::FromSender);
             }
@@ -1448,7 +1461,9 @@ mod tests {
 
         let seg = decode_first_segment(&actions3);
         match seg {
-            Segment::Cancel { reason, direction, .. } => {
+            Segment::Cancel {
+                reason, direction, ..
+            } => {
                 assert_eq!(reason, CancelReason::RetransmitLimitExceeded);
                 assert_eq!(direction, CancelDirection::FromSender);
             }
@@ -1481,7 +1496,9 @@ mod tests {
 
         let seg = decode_first_segment(&actions);
         match seg {
-            Segment::Cancel { reason, direction, .. } => {
+            Segment::Cancel {
+                reason, direction, ..
+            } => {
                 assert_eq!(reason, CancelReason::RetransmitLimitExceeded);
                 assert_eq!(direction, CancelDirection::FromSender);
             }
@@ -1519,7 +1536,9 @@ mod tests {
 
         let seg = decode_first_segment(&actions);
         match seg {
-            Segment::Cancel { reason, direction, .. } => {
+            Segment::Cancel {
+                reason, direction, ..
+            } => {
                 assert_eq!(reason, CancelReason::RetransmitLimitExceeded);
                 assert_eq!(direction, CancelDirection::FromSender);
             }
@@ -1554,7 +1573,12 @@ mod tests {
             if let ExportAction::SendSegment(wire) = action {
                 let mut reader = &wire[..];
                 let seg = segment::decode(&mut reader).unwrap();
-                if let Segment::Data { checkpoint, segment_type, .. } = seg {
+                if let Segment::Data {
+                    checkpoint,
+                    segment_type,
+                    ..
+                } = seg
+                {
                     segment_types.push(segment_type);
                     if checkpoint.is_some() {
                         checkpoint_count += 1;

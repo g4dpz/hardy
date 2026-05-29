@@ -221,7 +221,18 @@ mod tests {
 
     #[test]
     fn round_trip_various_values() {
-        let values = [0, 1, 127, 128, 255, 256, 16383, 16384, u64::MAX / 2, u64::MAX];
+        let values = [
+            0,
+            1,
+            127,
+            128,
+            255,
+            256,
+            16383,
+            16384,
+            u64::MAX / 2,
+            u64::MAX,
+        ];
         for &v in &values {
             let mut buf = BytesMut::new();
             encode(v, &mut buf);

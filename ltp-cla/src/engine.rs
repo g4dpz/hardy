@@ -72,11 +72,7 @@ pub(crate) async fn run_receive_loop(
 /// of data segment payloads (via `Buf::copy_to_bytes()` which becomes a
 /// reference-counted `split_to()` on `Bytes`). Routes the decoded segment
 /// to the appropriate session handler based on segment type and engine ID.
-async fn handle_datagram(
-    data: Bytes,
-    spans: &HashMap<u64, Arc<Span>>,
-    _sink: &Arc<dyn Sink>,
-) {
+async fn handle_datagram(data: Bytes, spans: &HashMap<u64, Arc<Span>>, _sink: &Arc<dyn Sink>) {
     // Decode the segment from the Bytes buffer.
     // Because Bytes implements Buf with zero-copy copy_to_bytes() (via split_to),
     // data segment payloads are extracted without an additional allocation.
@@ -203,19 +199,13 @@ async fn handle_datagram(
             match direction {
                 // Cancel from sender (type 12) → import session handling.
                 hardy_ltp::session::CancelDirection::FromSender => {
-                    span.on_import_cancel_from_sender(
-                        session_id.session_number,
-                        *reason,
-                    )
-                    .await;
+                    span.on_import_cancel_from_sender(session_id.session_number, *reason)
+                        .await;
                 }
                 // Cancel from receiver (type 14) → export session handling.
                 hardy_ltp::session::CancelDirection::FromReceiver => {
-                    span.on_export_cancel_from_receiver(
-                        session_id.session_number,
-                        *reason,
-                    )
-                    .await;
+                    span.on_export_cancel_from_receiver(session_id.session_number, *reason)
+                        .await;
                 }
             }
         }

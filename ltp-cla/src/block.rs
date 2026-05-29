@@ -87,12 +87,9 @@ pub fn unpack_block(block: Bytes) -> UnpackResult {
         }
 
         // Read 4-byte big-endian length prefix.
-        let bundle_len = u32::from_be_bytes([
-            block[pos],
-            block[pos + 1],
-            block[pos + 2],
-            block[pos + 3],
-        ]) as usize;
+        let bundle_len =
+            u32::from_be_bytes([block[pos], block[pos + 1], block[pos + 2], block[pos + 3]])
+                as usize;
         pos += 4;
 
         // Zero-length entry: skip without dispatching.
