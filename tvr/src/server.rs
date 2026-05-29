@@ -119,6 +119,7 @@ fn convert_contact(proto: proto::tvr::Contact) -> Result<Contact, tonic::Status>
         schedule,
         bandwidth_bps: proto.bandwidth_bps,
         delay_us: proto.delay_us,
+        engine_id: None,
     })
 }
 

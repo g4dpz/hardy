@@ -169,6 +169,30 @@ pub struct SpanConfig {
     /// These are registered with the BPA as peers during CLA startup.
     #[cfg_attr(feature = "serde", serde(default))]
     pub node_ids: Vec<String>,
+
+    /// Enable timer suspension on TVR link events (default: true).
+    ///
+    /// When enabled, all active retransmission and inactivity timers are
+    /// suspended on link-down and resumed on link-up per RFC 5326 §6.5/§6.6.
+    #[cfg_attr(feature = "serde", serde(default = "default_true"))]
+    pub tvr_timer_suspension: bool,
+
+    /// Maximum outbound queue size in bytes during link-down (default: 10 MB).
+    ///
+    /// Segments produced while the link is down are queued up to this limit.
+    /// When exceeded, the oldest segments are evicted to make room.
+    #[cfg_attr(
+        feature = "serde",
+        serde(default = "default_link_down_queue_max_bytes")
+    )]
+    pub link_down_queue_max_bytes: usize,
+
+    /// Enable dynamic rate control updates from TVR bandwidth (default: true).
+    ///
+    /// When enabled, link-up events carrying bandwidth information update
+    /// the span's token bucket rate limiter to match the contact capacity.
+    #[cfg_attr(feature = "serde", serde(default = "default_true"))]
+    pub tvr_rate_update: bool,
 }
 
 // --- Default value functions for serde ---
@@ -213,6 +237,14 @@ fn default_max_red_data_bytes_per_session() -> u64 {
     10_485_760
 }
 
+fn default_true() -> bool {
+    true
+}
+
+fn default_link_down_queue_max_bytes() -> usize {
+    10_485_760
+}
+
 // --- Default trait implementations ---
 
 impl Default for Config {
@@ -249,6 +281,9 @@ impl Default for SpanConfig {
             purge_on_link_down: false,
             ping_interval_secs: 0,
             node_ids: Vec::new(),
+            tvr_timer_suspension: default_true(),
+            link_down_queue_max_bytes: default_link_down_queue_max_bytes(),
+            tvr_rate_update: default_true(),
         }
     }
 }

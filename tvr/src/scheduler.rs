@@ -1,5 +1,6 @@
 use crate::contacts::{Contact, Schedule};
 use hardy_bpa::routes::{Action, RoutingSink};
+use hardy_bpa::{LinkDownProperties, LinkUpProperties};
 use hardy_eid_patterns::EidPattern;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
@@ -216,6 +217,15 @@ impl PartialOrd for Event {
     }
 }
 
+// Link properties carried alongside a route operation, used to emit
+// link-up/link-down notifications to the BPA.
+#[derive(Debug, Clone, Default)]
+struct LinkProperties {
+    engine_id: Option<u64>,
+    bandwidth_bps: Option<u64>,
+    delay_us: Option<u32>,
+}
+
 // A pending route operation to be awaited by the core loop.
 #[derive(Debug, Clone)]
 enum PendingRouteOp {
@@ -223,11 +233,13 @@ enum PendingRouteOp {
         pattern: EidPattern,
         action: Action,
         priority: u32,
+        link_properties: LinkProperties,
     },
     Remove {
         pattern: EidPattern,
         action: Action,
         priority: u32,
+        link_properties: LinkProperties,
     },
 }
 
@@ -449,6 +461,11 @@ impl Scheduler {
                 pattern: mc.contact.pattern.clone(),
                 action: mc.contact.action.clone(),
                 priority: mc.priority,
+                link_properties: LinkProperties {
+                    engine_id: mc.contact.engine_id,
+                    bandwidth_bps: mc.contact.bandwidth_bps,
+                    delay_us: mc.contact.delay_us,
+                },
             })
         } else {
             None
@@ -462,6 +479,11 @@ impl Scheduler {
         }
         mc.active = false;
         let key = mc.route_key();
+        let link_properties = LinkProperties {
+            engine_id: mc.contact.engine_id,
+            bandwidth_bps: mc.contact.bandwidth_bps,
+            delay_us: mc.contact.delay_us,
+        };
         if let Some(count) = self.route_refs.get_mut(&key) {
             *count -= 1;
             if *count == 0 {
@@ -470,6 +492,7 @@ impl Scheduler {
                     pattern: mc.contact.pattern.clone(),
                     action: mc.contact.action.clone(),
                     priority: mc.priority,
+                    link_properties,
                 });
             }
         }
@@ -632,6 +655,7 @@ fn contacts_match(a: &Contact, b: &Contact) -> bool {
         && a.priority == b.priority
         && a.bandwidth_bps == b.bandwidth_bps
         && a.delay_us == b.delay_us
+        && a.engine_id == b.engine_id
 }
 
 // ── Core loop ───────────────────────────────────────────────────────
@@ -642,9 +666,23 @@ async fn apply_route_op(sink: &dyn RoutingSink, op: PendingRouteOp) {
             pattern,
             action,
             priority,
+            link_properties,
         } => {
             if let Err(e) = sink.add_route(pattern, action, priority).await {
                 warn!("Failed to add route: {e}");
+            }
+            // Emit link-up if the contact has an associated engine ID
+            if let Some(engine_id) = link_properties.engine_id {
+                sink.notify_link_up(
+                    engine_id,
+                    LinkUpProperties {
+                        bandwidth_bps: link_properties.bandwidth_bps,
+                        one_way_light_time_ms: link_properties
+                            .delay_us
+                            .map(|us| (us as u64) / 1000),
+                    },
+                )
+                .await;
             }
             metrics::counter!("tvr_route_installs").increment(1);
         }
@@ -652,9 +690,15 @@ async fn apply_route_op(sink: &dyn RoutingSink, op: PendingRouteOp) {
             pattern,
             action,
             priority,
+            link_properties,
         } => {
             if let Err(e) = sink.remove_route(&pattern, &action, priority).await {
                 warn!("Failed to remove route: {e}");
+            }
+            // Emit link-down if the contact has an associated engine ID
+            if let Some(engine_id) = link_properties.engine_id {
+                sink.notify_link_down(engine_id, LinkDownProperties { scheduled: true })
+                    .await;
             }
             metrics::counter!("tvr_route_withdrawals").increment(1);
         }
@@ -821,6 +865,7 @@ mod test {
             schedule: Schedule::Permanent,
             bandwidth_bps: None,
             delay_us: None,
+            engine_id: None,
         }
     }
 
@@ -837,6 +882,7 @@ mod test {
             schedule: Schedule::OneShot { start, end },
             bandwidth_bps: None,
             delay_us: None,
+            engine_id: None,
         }
     }
 
@@ -858,6 +904,7 @@ mod test {
             },
             bandwidth_bps: None,
             delay_us: None,
+            engine_id: None,
         }
     }
 

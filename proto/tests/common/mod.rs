@@ -157,6 +157,12 @@ impl routes::RoutingSink for RoutingSinkWrapper {
     ) -> routes::Result<bool> {
         self.0.remove_route(p, a, pri).await
     }
+    async fn notify_link_up(&self, engine_id: u64, properties: hardy_bpa::LinkUpProperties) {
+        self.0.notify_link_up(engine_id, properties).await;
+    }
+    async fn notify_link_down(&self, engine_id: u64, properties: hardy_bpa::LinkDownProperties) {
+        self.0.notify_link_down(engine_id, properties).await;
+    }
 }
 
 #[async_trait]
@@ -177,6 +183,16 @@ impl cla::Sink for ClaSinkWrapper {
     }
     async fn remove_peer(&self, a: &cla::ClaAddress) -> cla::Result<bool> {
         self.0.remove_peer(a).await
+    }
+    fn register_link_notifier(
+        &self,
+        engine_id: u64,
+        notifier: std::sync::Arc<dyn hardy_bpa::cla::LinkStateNotifier>,
+    ) {
+        self.0.register_link_notifier(engine_id, notifier);
+    }
+    fn unregister_link_notifier(&self, engine_id: u64) {
+        self.0.unregister_link_notifier(engine_id);
     }
 }
 

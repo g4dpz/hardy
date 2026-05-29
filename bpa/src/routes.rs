@@ -1,4 +1,5 @@
 use super::*;
+use cla::{LinkDownProperties, LinkUpProperties};
 use hardy_bpv7::eid::NodeId;
 use hardy_eid_patterns::EidPattern;
 use thiserror::Error;
@@ -127,6 +128,12 @@ pub trait RoutingSink: Send + Sync {
         action: &Action,
         priority: u32,
     ) -> Result<bool>;
+
+    /// Notify CLAs that a link to the given engine ID has come up.
+    async fn notify_link_up(&self, engine_id: u64, properties: LinkUpProperties);
+
+    /// Notify CLAs that a link to the given engine ID has gone down.
+    async fn notify_link_down(&self, engine_id: u64, properties: LinkDownProperties);
 }
 
 /// A simple routing agent that installs a fixed set of routes on registration.

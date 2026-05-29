@@ -77,3 +77,6 @@ use alloc::collections::{BTreeMap, BTreeSet, btree_map};
 // Re-export for consistency
 pub use bytes::Bytes;
 pub use hardy_async::async_trait;
+
+// Re-export link state types for CLA integration
+pub use cla::{LinkDownProperties, LinkStateNotifier, LinkUpProperties};

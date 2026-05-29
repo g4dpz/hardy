@@ -50,6 +50,12 @@ impl routes::RoutingSink for MockRoutingSink {
     ) -> routes::Result<bool> {
         Ok(true)
     }
+
+    async fn notify_link_up(&self, _engine_id: u64, _properties: hardy_bpa::LinkUpProperties) {
+    }
+
+    async fn notify_link_down(&self, _engine_id: u64, _properties: hardy_bpa::LinkDownProperties) {
+    }
 }
 
 // ── CLA Sink ──────────────────────────────────────────────────────────

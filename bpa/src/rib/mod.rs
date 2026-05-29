@@ -1,4 +1,5 @@
 use super::*;
+use cla::{LinkDownProperties, LinkStateNotifier, LinkUpProperties};
 use futures::{FutureExt, select_biased};
 use hardy_async::sync::RwLock;
 use hardy_bpv7::{
@@ -42,6 +43,10 @@ pub struct Rib {
 
     // The priority for services - default 1
     service_priority: u32,
+
+    // Link state notifiers: engine_id → notifier (for TVR link event dispatch)
+    // CLAs register here during on_register to receive link state events from routing agents.
+    link_notifiers: hardy_async::sync::spin::Mutex<HashMap<u64, Arc<dyn LinkStateNotifier>>>,
 }
 
 pub(crate) struct RibBuilder {
@@ -124,6 +129,7 @@ impl Rib {
             poll_waiting_notify: Arc::new(hardy_async::Notify::new()),
             store,
             service_priority,
+            link_notifiers: Default::default(),
         }
     }
 
@@ -167,5 +173,52 @@ impl Rib {
 
     pub fn remove_address_type(&self, address_type: &cla::ClaAddressType) {
         self.inner.write().address_types.remove(address_type);
+    }
+
+    /// Register a [`LinkStateNotifier`] for a specific engine ID.
+    ///
+    /// CLAs call this during `on_register` to advertise their ability to receive
+    /// link state events for their configured spans. When a routing agent calls
+    /// `notify_link_up`/`notify_link_down` on its [`RoutingSink`](crate::routes::RoutingSink),
+    /// the RIB dispatches the event to the registered notifier for that engine ID.
+    pub fn register_link_notifier(
+        &self,
+        engine_id: u64,
+        notifier: Arc<dyn LinkStateNotifier>,
+    ) {
+        self.link_notifiers.lock().insert(engine_id, notifier);
+        debug!("Registered link state notifier for engine_id={engine_id}");
+    }
+
+    /// Unregister a [`LinkStateNotifier`] for a specific engine ID.
+    ///
+    /// Called during CLA unregistration to clean up link event subscriptions.
+    pub fn unregister_link_notifier(&self, engine_id: u64) {
+        self.link_notifiers.lock().remove(&engine_id);
+        debug!("Unregistered link state notifier for engine_id={engine_id}");
+    }
+
+    /// Dispatch a link-up event to the registered notifier for the given engine ID.
+    ///
+    /// If no notifier is registered for the engine ID, the event is silently discarded.
+    pub(crate) async fn notify_link_up(&self, engine_id: u64, properties: LinkUpProperties) {
+        let notifier = self.link_notifiers.lock().get(&engine_id).cloned();
+        if let Some(notifier) = notifier {
+            notifier.on_link_up(engine_id, properties).await;
+        } else {
+            debug!("No link state notifier registered for engine_id={engine_id}, discarding link-up event");
+        }
+    }
+
+    /// Dispatch a link-down event to the registered notifier for the given engine ID.
+    ///
+    /// If no notifier is registered for the engine ID, the event is silently discarded.
+    pub(crate) async fn notify_link_down(&self, engine_id: u64, properties: LinkDownProperties) {
+        let notifier = self.link_notifiers.lock().get(&engine_id).cloned();
+        if let Some(notifier) = notifier {
+            notifier.on_link_down(engine_id, properties).await;
+        } else {
+            debug!("No link state notifier registered for engine_id={engine_id}, discarding link-down event");
+        }
     }
 }

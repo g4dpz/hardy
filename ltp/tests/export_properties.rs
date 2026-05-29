@@ -435,6 +435,138 @@ proptest! {
 }
 
 // ---------------------------------------------------------------------------
+// Feature: tvr-ltp-integration, Property 4: Suspend-Then-Resume Preserves Timer Remaining Duration
+// ---------------------------------------------------------------------------
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(256))]
+
+    /// **Validates: Requirements 2.2, 3.1, 3.2, 3.3, 3.4**
+    ///
+    /// Property 4: Suspend-Then-Resume Preserves Timer Remaining Duration
+    ///
+    /// For any timer with remaining duration `d` at the moment of suspension,
+    /// resuming that timer shall schedule a new deadline at `now + d`,
+    /// preserving the exact remaining duration that was recorded during
+    /// suspension.
+    #[test]
+    fn prop_suspend_then_resume_preserves_remaining_duration(
+        block_data in prop::collection::vec(any::<u8>(), 1..=2048usize),
+        max_segment_size in 1usize..=512,
+        checkpoint_every_n in 0u32..=5,
+        remaining_millis in prop::collection::vec(1u64..=600_000, 1..=64),
+    ) {
+        let block = Bytes::from(block_data);
+        let config = ExportConfig {
+            max_segment_size,
+            max_retransmissions: 5,
+            retransmit_timeout: Duration::from_secs(30),
+            checkpoint_every_n,
+            max_checkpoints: None,
+            green: false,
+        };
+
+        let session_id = SessionId {
+            engine_id: 1,
+            session_number: 42,
+        };
+
+        let (mut session, _initial_actions) =
+            ExportSession::new(session_id, block, 1, config);
+
+        // Step 1: Suspend timers — get the list of checkpoint serials with active timers
+        let suspend_actions = session.suspend_timers();
+
+        // Collect the checkpoint serials that were suspended
+        let suspended_serials: Vec<u64> = suspend_actions
+            .iter()
+            .filter_map(|a| {
+                if let ExportAction::SuspendTimer { checkpoint_serial } = a {
+                    Some(*checkpoint_serial)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        // After suspend, timers_suspended() must be true
+        prop_assert!(
+            session.timers_suspended(),
+            "timers_suspended() should be true after suspend_timers()"
+        );
+
+        // If there are no active timers (e.g., empty block edge case), skip the resume check
+        if suspended_serials.is_empty() {
+            return Ok(());
+        }
+
+        // Step 2: Generate random remaining durations for each suspended timer.
+        // Use the generated remaining_millis, cycling if needed.
+        let suspended_with_durations: Vec<(u64, Duration)> = suspended_serials
+            .iter()
+            .enumerate()
+            .map(|(i, &serial)| {
+                let millis = remaining_millis[i % remaining_millis.len()];
+                (serial, Duration::from_millis(millis))
+            })
+            .collect();
+
+        // Step 3: Resume timers with those durations
+        let resume_actions = session.resume_timers(&suspended_with_durations);
+
+        // Step 4: Assert that the returned ResumeTimer actions contain exactly
+        // the same checkpoint serials and durations that were passed in
+        let resumed: Vec<(u64, Duration)> = resume_actions
+            .iter()
+            .filter_map(|a| {
+                if let ExportAction::ResumeTimer {
+                    checkpoint_serial,
+                    remaining,
+                } = a
+                {
+                    Some((*checkpoint_serial, *remaining))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        prop_assert_eq!(
+            resumed.len(),
+            suspended_with_durations.len(),
+            "Number of resumed timers ({}) should equal number of suspended timers ({})",
+            resumed.len(),
+            suspended_with_durations.len(),
+        );
+
+        // Verify each resumed timer matches the input exactly
+        for (expected, actual) in suspended_with_durations.iter().zip(resumed.iter()) {
+            prop_assert_eq!(
+                actual.0,
+                expected.0,
+                "Resumed checkpoint serial {} does not match expected {}",
+                actual.0,
+                expected.0,
+            );
+            prop_assert_eq!(
+                actual.1,
+                expected.1,
+                "Resumed duration {:?} does not match expected {:?} for checkpoint serial {}",
+                actual.1,
+                expected.1,
+                expected.0,
+            );
+        }
+
+        // Step 5: After resume, timers_suspended() must be false
+        prop_assert!(
+            !session.timers_suspended(),
+            "timers_suspended() should be false after resume_timers()"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Helper: extract checkpoint serial numbers from a list of ExportActions
 // ---------------------------------------------------------------------------
 

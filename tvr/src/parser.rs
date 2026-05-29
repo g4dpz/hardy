@@ -375,6 +375,7 @@ fn contact<'a>() -> impl Parser<'a, &'a str, Contact, Extra<'a>> {
                 schedule,
                 bandwidth_bps: fields.bps,
                 delay_us: fields.delay,
+                engine_id: None,
             })
         })
         .labelled("contact")

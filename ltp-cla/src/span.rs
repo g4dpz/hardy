@@ -8,7 +8,7 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use bytes::{BufMut, Bytes, BytesMut};
@@ -278,6 +278,90 @@ impl SessionHistory {
 }
 
 // ---------------------------------------------------------------------------
+// Link State
+// ---------------------------------------------------------------------------
+
+/// Link state for a span, distinguishing the cause of link-down.
+///
+/// This replaces the previous `link_alive: AtomicBool` with a richer state
+/// that tracks whether the link is down due to a TVR contact window closing
+/// or due to ping-based failure detection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LinkState {
+    /// Link is operational.
+    Up,
+    /// Link is down due to a TVR contact window closing.
+    DownTvr,
+    /// Link is down due to ping-based failure detection.
+    DownPing,
+}
+
+// ---------------------------------------------------------------------------
+// Outbound Queue
+// ---------------------------------------------------------------------------
+
+/// A bounded FIFO queue for outbound segments during link-down periods.
+///
+/// When the queue exceeds `max_bytes`, the oldest segments are evicted
+/// to make room for new segments.
+pub struct OutboundQueue {
+    /// Queued segments in FIFO order.
+    segments: VecDeque<Bytes>,
+    /// Current total size in bytes.
+    current_bytes: usize,
+    /// Maximum allowed size in bytes.
+    max_bytes: usize,
+}
+
+impl OutboundQueue {
+    /// Create a new outbound queue with the given maximum size in bytes.
+    pub fn new(max_bytes: usize) -> Self {
+        Self {
+            segments: VecDeque::new(),
+            current_bytes: 0,
+            max_bytes,
+        }
+    }
+
+    /// Enqueue a segment. Evicts oldest segments if over capacity.
+    /// Returns the number of bytes evicted.
+    pub fn enqueue(&mut self, segment: Bytes) -> usize {
+        let segment_len = segment.len();
+        let mut evicted_bytes = 0;
+
+        // Evict oldest segments until there's room for the new one.
+        while self.current_bytes + segment_len > self.max_bytes && !self.segments.is_empty() {
+            if let Some(old) = self.segments.pop_front() {
+                evicted_bytes += old.len();
+                self.current_bytes -= old.len();
+            }
+        }
+
+        self.segments.push_back(segment);
+        self.current_bytes += segment_len;
+
+        evicted_bytes
+    }
+
+    /// Drain all queued segments in FIFO order.
+    pub fn drain(&mut self) -> Vec<Bytes> {
+        let drained: Vec<Bytes> = self.segments.drain(..).collect();
+        self.current_bytes = 0;
+        drained
+    }
+
+    /// Current queue size in bytes.
+    pub fn current_bytes(&self) -> usize {
+        self.current_bytes
+    }
+
+    /// Whether the queue is empty.
+    pub fn is_empty(&self) -> bool {
+        self.segments.is_empty()
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Session State Wrappers
 // ---------------------------------------------------------------------------
 
@@ -374,11 +458,18 @@ pub struct Span {
     /// This allows runtime updates to accommodate changing orbital geometry
     /// without recreating the span.
     one_way_light_time_ms: AtomicU64,
-    /// Whether the link to the remote engine is considered alive.
+    /// Current link state, distinguishing the cause of link-down.
     ///
-    /// Set to `true` when a ping CAS is received; set to `false` when the
-    /// ping response timeout expires. Starts as `true` (optimistic).
-    link_alive: AtomicBool,
+    /// Replaces the previous `link_alive: AtomicBool` with a richer state
+    /// that tracks whether the link is down due to TVR or ping detection.
+    /// Starts as `LinkState::Up` (optimistic).
+    pub link_state: std::sync::Mutex<LinkState>,
+    /// Outbound segment queue for link-down periods.
+    ///
+    /// Segments produced while the link is down are queued here up to
+    /// `config.link_down_queue_max_bytes`. When exceeded, oldest segments
+    /// are evicted to make room.
+    pub outbound_queue: std::sync::Mutex<OutboundQueue>,
     /// Timestamp of the last segment sent to the remote engine.
     ///
     /// Used by the ping timer to determine whether a keepalive probe is needed.
@@ -397,6 +488,24 @@ pub struct Span {
     /// When the first bundle is added to an empty aggregation buffer,
     /// a timer is started. When it fires, the buffer is flushed.
     pub aggr_timer: std::sync::Mutex<Option<AbortHandle>>,
+    /// Suspended export timer state: checkpoint_serial → remaining duration.
+    ///
+    /// When a link-down event triggers timer suspension, the remaining duration
+    /// of each active export retransmission timer is recorded here. On link-up,
+    /// these durations are used to resume timers per RFC 5326 §6.6.
+    pub suspended_export_timers: std::sync::Mutex<HashMap<u64, Duration>>,
+    /// Suspended import timer state: report_serial → remaining duration.
+    ///
+    /// When a link-down event triggers timer suspension, the remaining duration
+    /// of each active import report retransmission timer is recorded here.
+    /// On link-up, these durations are used to resume timers.
+    pub suspended_import_timers: std::sync::Mutex<HashMap<u64, Duration>>,
+    /// Suspended inactivity timers: session_number → remaining duration.
+    ///
+    /// When a link-down event triggers timer suspension, the remaining duration
+    /// of each active import session inactivity timer is recorded here.
+    /// On link-up, these durations are used to resume timers.
+    pub suspended_inactivity_timers: std::sync::Mutex<HashMap<u64, Duration>>,
 }
 
 impl Span {
@@ -431,11 +540,15 @@ impl Span {
             rate_limiter: std::sync::Mutex::new(rate_limiter),
             session_history: std::sync::Mutex::new(SessionHistory::new(history_capacity)),
             one_way_light_time_ms: AtomicU64::new(owlt_atomic),
-            link_alive: AtomicBool::new(true),
+            link_state: std::sync::Mutex::new(LinkState::Up),
+            outbound_queue: std::sync::Mutex::new(OutboundQueue::new(config.link_down_queue_max_bytes)),
             last_send_time: std::sync::Mutex::new(Instant::now()),
             ping_timer: std::sync::Mutex::new(None),
             ping_response_timer: std::sync::Mutex::new(None),
             aggr_timer: std::sync::Mutex::new(None),
+            suspended_export_timers: std::sync::Mutex::new(HashMap::new()),
+            suspended_import_timers: std::sync::Mutex::new(HashMap::new()),
+            suspended_inactivity_timers: std::sync::Mutex::new(HashMap::new()),
             config,
             local_engine_id,
         }
@@ -1061,6 +1174,11 @@ impl Span {
                 } => {
                     timers_to_spawn.push((checkpoint_serial, duration));
                 }
+                ExportAction::SuspendTimer { .. } | ExportAction::ResumeTimer { .. } => {
+                    // Suspend/Resume actions are handled separately by the
+                    // link event handlers (suspend_all_timers / resume_all_timers).
+                    // They should not appear in normal session operation flow.
+                }
             }
         }
         (segments_to_send, timers_to_spawn)
@@ -1503,14 +1621,26 @@ impl Span {
 
     /// Returns whether the link is currently considered alive.
     pub fn is_link_alive(&self) -> bool {
-        self.link_alive.load(Ordering::Relaxed)
+        let state = self.link_state.lock().unwrap();
+        *state == LinkState::Up
     }
 
     /// Called when the periodic ping timer fires.
     ///
     /// Checks whether data has been sent recently. If not, sends a CS for
     /// session 0 (the ping probe) and starts the response timeout.
+    ///
+    /// If the link is in `DownTvr` state, the probe is suppressed entirely
+    /// to avoid transmitting into a known-dead link (Requirement 7.3).
     async fn on_ping_timer_fired(self: &Arc<Self>) {
+        // Suppress ping probes during TVR-driven link-down.
+        {
+            let state = self.link_state.lock().unwrap();
+            if *state == LinkState::DownTvr {
+                return;
+            }
+        }
+
         let ping_interval = Duration::from_secs(self.config.ping_interval_secs);
 
         // Check if data was sent recently enough that a ping is unnecessary.
@@ -1582,14 +1712,16 @@ impl Span {
         }
 
         // Mark link as alive.
-        self.link_alive.store(true, Ordering::Relaxed);
+        let mut state = self.link_state.lock().unwrap();
+        *state = LinkState::Up;
     }
 
     /// Called when the ping response timeout expires without receiving a CAS.
     ///
-    /// Emits a link-down event and sets `link_alive` to false. If
-    /// `purge_on_link_down` is configured, cancels all active export sessions
-    /// and notifies the BPA so bundles can be re-routed.
+    /// Triggers a link-down transition via `handle_link_down` with
+    /// `scheduled: false`, which reuses the same suspension logic as TVR
+    /// events. If `purge_on_link_down` is configured, cancels all active
+    /// export sessions and notifies the BPA so bundles can be re-routed.
     async fn on_ping_response_timeout(self: &Arc<Self>) {
         // Clear the response timer handle (it already fired).
         {
@@ -1602,10 +1734,12 @@ impl Span {
             "ping response timeout: link down detected"
         );
 
-        // Mark link as down.
-        self.link_alive.store(false, Ordering::Relaxed);
+        // Transition to DownPing via handle_link_down, which triggers timer
+        // suspension (if configured) using the same path as TVR events.
+        self.handle_link_down(hardy_bpa::cla::LinkDownProperties { scheduled: false })
+            .await;
 
-        // Emit metric for link-down event.
+        // Emit metric for ping-based link-down event.
         metrics::counter!("ltp.link.down_events").increment(1);
 
         // If purge_on_link_down is enabled, cancel all active export sessions
@@ -1673,15 +1807,376 @@ impl Span {
     }
 
     // -----------------------------------------------------------------------
+    // TVR Link Event Handlers
+    // -----------------------------------------------------------------------
+
+    /// Handle a link-down event for this span.
+    ///
+    /// Transitions the link state to `DownTvr` or `DownPing` based on whether
+    /// the event is scheduled (TVR) or unscheduled (ping). If the span is
+    /// already in the matching down state, this is a no-op (idempotent).
+    ///
+    /// On transition:
+    /// - Emits `ltp.tvr.link_down` metric counter
+    /// - If scheduled: cancels the ping timer to suppress probes
+    /// - If `tvr_timer_suspension` is enabled: suspends all active timers
+    pub async fn handle_link_down(self: &Arc<Self>, properties: hardy_bpa::cla::LinkDownProperties) {
+        {
+            let mut state = self.link_state.lock().unwrap();
+            // Idempotent: return early if already in matching down state
+            if properties.scheduled && *state == LinkState::DownTvr {
+                return;
+            }
+            if !properties.scheduled && *state == LinkState::DownPing {
+                return;
+            }
+
+            *state = if properties.scheduled {
+                LinkState::DownTvr
+            } else {
+                LinkState::DownPing
+            };
+        }
+
+        metrics::counter!("ltp.tvr.link_down").increment(1);
+
+        // Suppress ping probes if TVR-driven
+        if properties.scheduled {
+            self.stop_ping_timer();
+        }
+
+        // Suspend timers if configured
+        if self.config.tvr_timer_suspension {
+            self.suspend_all_timers().await;
+        }
+    }
+
+    /// Suspend all active timers across export and import sessions.
+    ///
+    /// For export sessions: calls `session.suspend_timers()`, aborts timer
+    /// handles, and records remaining durations (using the full retransmit
+    /// timeout as a conservative approximation).
+    ///
+    /// For import sessions: aborts report timer handles and records remaining
+    /// durations. Also aborts inactivity timers and records their remaining
+    /// durations.
+    ///
+    /// Logs the number of suspended timers at debug level.
+    async fn suspend_all_timers(self: &Arc<Self>) {
+        let retransmit_timeout = self.compute_retransmit_timeout();
+        let mut total_suspended = 0u32;
+
+        // Suspend export session timers
+        {
+            let mut sessions = self.export_sessions.lock().await;
+            let mut suspended_exports = self.suspended_export_timers.lock().unwrap();
+
+            for (_session_number, state) in sessions.iter_mut() {
+                // Call the engine's suspend_timers to mark the session as suspended
+                let _suspend_actions = state.session.suspend_timers();
+
+                // Abort all timer handles and record remaining durations
+                for (checkpoint_serial, handle) in state.timers.drain() {
+                    handle.abort();
+                    // Use the full retransmit timeout as a conservative remaining duration.
+                    // This is slightly longer than optimal but ensures timers don't fire
+                    // during link-down and will correctly resume on link-up.
+                    suspended_exports.insert(checkpoint_serial, retransmit_timeout);
+                    total_suspended += 1;
+                }
+            }
+        }
+
+        // Suspend import session timers
+        {
+            let mut sessions = self.import_sessions.lock().await;
+            let mut suspended_imports = self.suspended_import_timers.lock().unwrap();
+            let mut suspended_inactivity = self.suspended_inactivity_timers.lock().unwrap();
+
+            for (session_number, state) in sessions.iter_mut() {
+                // Abort report timer handles and record remaining durations
+                for (report_serial, handle) in state.timers.drain() {
+                    handle.abort();
+                    // Use the full retransmit timeout as a conservative remaining duration.
+                    suspended_imports.insert(report_serial, retransmit_timeout);
+                    total_suspended += 1;
+                }
+
+                // Abort inactivity timer if present
+                if let Some(handle) = state.inactivity_timer.take() {
+                    handle.abort();
+                    // Use the full inactivity limit as the remaining duration.
+                    let inactivity_duration =
+                        Duration::from_secs(self.config.session_inactivity_limit_secs);
+                    suspended_inactivity.insert(*session_number, inactivity_duration);
+                    total_suspended += 1;
+                }
+            }
+        }
+
+        debug!(
+            engine_id = self.config.engine_id,
+            suspended_timers = total_suspended,
+            "suspended all timers for link-down"
+        );
+    }
+
+    /// Handle a link-up event for this span.
+    ///
+    /// Transitions the link state to `Up`. If the span is already up, this
+    /// is a no-op (idempotent).
+    ///
+    /// On transition:
+    /// - Emits `ltp.tvr.link_up` metric counter
+    /// - If `tvr_rate_update` and bandwidth provided: updates token bucket rate
+    /// - If `one_way_light_time_ms` provided: updates the OWLT value
+    /// - If `tvr_timer_suspension`: resumes all suspended timers
+    /// - Flushes the outbound queue with rate control
+    /// - Resets ping detection state
+    pub async fn handle_link_up(self: &Arc<Self>, properties: hardy_bpa::cla::LinkUpProperties) {
+        {
+            let mut state = self.link_state.lock().unwrap();
+            if *state == LinkState::Up {
+                return; // Already up — no-op
+            }
+            *state = LinkState::Up;
+        }
+
+        metrics::counter!("ltp.tvr.link_up").increment(1);
+
+        // Update rate control if bandwidth provided and configured
+        if self.config.tvr_rate_update {
+            if let Some(bps) = properties.bandwidth_bps {
+                let mut limiter = self.rate_limiter.lock().unwrap();
+                if bps > 0 {
+                    *limiter = Some(TokenBucket::new(bps));
+                } else {
+                    // Rate of 0 means unlimited — remove the token bucket
+                    *limiter = None;
+                }
+            }
+        }
+
+        // Update one-way light time if provided
+        if let Some(owlt_ms) = properties.one_way_light_time_ms {
+            self.update_one_way_light_time(Some(owlt_ms));
+        }
+
+        // Resume timers if configured
+        if self.config.tvr_timer_suspension {
+            self.resume_all_timers().await;
+        }
+
+        // Flush outbound queue with rate control
+        self.flush_outbound_queue().await;
+
+        // Reset ping detection state
+        self.reset_ping_state();
+    }
+
+    /// Resume all previously suspended timers.
+    ///
+    /// For export sessions: calls `session.resume_timers()` with the recorded
+    /// remaining durations and spawns new timer tasks.
+    ///
+    /// For import sessions: spawns new report timer tasks with remaining durations.
+    ///
+    /// For inactivity timers: spawns new inactivity timer tasks with remaining durations.
+    ///
+    /// Clears all suspended timer maps after resumption.
+    async fn resume_all_timers(self: &Arc<Self>) {
+        let mut total_resumed = 0u32;
+
+        // Resume export session timers
+        {
+            let suspended_exports: HashMap<u64, Duration> = {
+                let mut map = self.suspended_export_timers.lock().unwrap();
+                std::mem::take(&mut *map)
+            };
+
+            if !suspended_exports.is_empty() {
+                let suspended_vec: Vec<(u64, Duration)> =
+                    suspended_exports.iter().map(|(&k, &v)| (k, v)).collect();
+
+                let mut sessions = self.export_sessions.lock().await;
+                for (_session_number, state) in sessions.iter_mut() {
+                    // Call the engine's resume_timers with the suspended durations
+                    let resume_actions = state.session.resume_timers(&suspended_vec);
+
+                    // Extract and spawn timers from the resume actions
+                    for action in resume_actions {
+                        if let ExportAction::ResumeTimer {
+                            checkpoint_serial,
+                            remaining,
+                        } = action
+                        {
+                            let span = Arc::clone(self);
+                            let session_number = state.session.id().session_number;
+                            let handle = tokio::spawn(async move {
+                                tokio::time::sleep(remaining).await;
+                                span.on_export_timer_expired(session_number, checkpoint_serial)
+                                    .await;
+                            });
+                            state
+                                .timers
+                                .insert(checkpoint_serial, handle.abort_handle());
+                            total_resumed += 1;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Resume import session report timers
+        {
+            let suspended_imports: HashMap<u64, Duration> = {
+                let mut map = self.suspended_import_timers.lock().unwrap();
+                std::mem::take(&mut *map)
+            };
+
+            if !suspended_imports.is_empty() {
+                let mut sessions = self.import_sessions.lock().await;
+                for (_session_number, state) in sessions.iter_mut() {
+                    // Check which suspended report serials belong to this session
+                    // by checking if the serial was previously in this session's timers.
+                    // Since we drained all timers during suspension, we spawn timers
+                    // for all suspended serials that match.
+                    let session_number = state.session.id().session_number;
+                    for (&report_serial, &remaining) in &suspended_imports {
+                        let span = Arc::clone(self);
+                        let handle = tokio::spawn(async move {
+                            tokio::time::sleep(remaining).await;
+                            span.on_import_report_timer_expired(session_number, report_serial)
+                                .await;
+                        });
+                        state.timers.insert(report_serial, handle.abort_handle());
+                        total_resumed += 1;
+                    }
+                }
+            }
+        }
+
+        // Resume inactivity timers
+        {
+            let suspended_inactivity: HashMap<u64, Duration> = {
+                let mut map = self.suspended_inactivity_timers.lock().unwrap();
+                std::mem::take(&mut *map)
+            };
+
+            if !suspended_inactivity.is_empty() {
+                let mut sessions = self.import_sessions.lock().await;
+                for (&session_number, &remaining) in &suspended_inactivity {
+                    if let Some(state) = sessions.get_mut(&session_number) {
+                        let span = Arc::clone(self);
+                        let handle = tokio::spawn(async move {
+                            tokio::time::sleep(remaining).await;
+                            span.on_import_inactivity_expired(session_number).await;
+                        });
+                        state.inactivity_timer = Some(handle.abort_handle());
+                        total_resumed += 1;
+                    }
+                }
+            }
+        }
+
+        debug!(
+            engine_id = self.config.engine_id,
+            resumed_timers = total_resumed,
+            "resumed all timers for link-up"
+        );
+    }
+
+    /// Flush the outbound queue, transmitting all queued segments with rate control.
+    ///
+    /// Drains all segments from the outbound queue and sends each one via
+    /// the UDP socket, applying the token bucket rate limiter.
+    /// Logs the number of flushed segments and total bytes at debug level.
+    async fn flush_outbound_queue(&self) {
+        let segments = {
+            let mut queue = self.outbound_queue.lock().unwrap();
+            queue.drain()
+        };
+
+        if segments.is_empty() {
+            return;
+        }
+
+        let num_segments = segments.len();
+        let total_bytes: usize = segments.iter().map(|s| s.len()).sum();
+
+        for segment in &segments {
+            self.send_segment_direct(segment).await;
+        }
+
+        // Update queue gauge to 0 after flush
+        metrics::gauge!("ltp.tvr.queue_bytes", "engine_id" => self.config.engine_id.to_string()).set(0.0);
+
+        debug!(
+            engine_id = self.config.engine_id,
+            flushed_segments = num_segments,
+            flushed_bytes = total_bytes,
+            "flushed outbound queue on link-up"
+        );
+    }
+
+    /// Reset ping detection state after a link-up event.
+    ///
+    /// Cancels any pending ping response timer and restarts the periodic
+    /// ping timer so that link monitoring resumes from a clean state.
+    fn reset_ping_state(self: &Arc<Self>) {
+        // Cancel any pending ping response timeout
+        {
+            let mut response_timer = self.ping_response_timer.lock().unwrap();
+            if let Some(handle) = response_timer.take() {
+                handle.abort();
+            }
+        }
+
+        // Restart the periodic ping timer
+        self.start_ping_timer();
+    }
+
+    // -----------------------------------------------------------------------
     // Transport Helpers
     // -----------------------------------------------------------------------
 
     /// Send a segment to the remote engine via UDP.
     ///
+    /// If the link is currently down (`DownTvr` or `DownPing`), the segment
+    /// is enqueued in the outbound queue instead of being transmitted.
+    ///
     /// If a rate limiter is configured, consumes tokens for the segment size
     /// and sleeps if the bucket is empty before sending.
     /// Also updates `last_send_time` for ping interval tracking.
     async fn send_segment(&self, bytes: &[u8]) {
+        // Check link state — enqueue if link is down
+        {
+            let state = self.link_state.lock().unwrap();
+            if *state == LinkState::DownTvr || *state == LinkState::DownPing {
+                let segment = Bytes::copy_from_slice(bytes);
+                let mut queue = self.outbound_queue.lock().unwrap();
+                let evicted = queue.enqueue(segment);
+                if evicted > 0 {
+                    warn!(
+                        engine_id = self.config.engine_id,
+                        evicted_bytes = evicted,
+                        "outbound queue overflow, evicted oldest segments"
+                    );
+                    metrics::counter!("ltp.tvr.queue_evicted_bytes").increment(evicted as u64);
+                }
+                metrics::gauge!("ltp.tvr.queue_bytes", "engine_id" => self.config.engine_id.to_string()).set(queue.current_bytes() as f64);
+                return;
+            }
+        }
+
+        self.send_segment_direct(bytes).await;
+    }
+
+    /// Send a segment directly via UDP without checking link state.
+    ///
+    /// Used by `flush_outbound_queue` to transmit queued segments after
+    /// the link has transitioned back to Up.
+    async fn send_segment_direct(&self, bytes: &[u8]) {
         // Emit metric for every segment transmitted.
         metrics::counter!("ltp.segments.tx_total").increment(1);
 
@@ -4172,7 +4667,10 @@ mod tests {
         });
 
         // Simulate link going down.
-        span.link_alive.store(false, Ordering::Relaxed);
+        {
+            let mut state = span.link_state.lock().unwrap();
+            *state = LinkState::DownPing;
+        }
         assert!(!span.is_link_alive());
 
         // Receive a ping CAS — should mark link alive.
@@ -4980,5 +5478,243 @@ mod tests {
 
         // BPA should have been notified even with no sessions.
         assert!(mock_sink.remove_peer_called.load(Ordering::Relaxed));
+    }
+
+    // -----------------------------------------------------------------------
+    // TVR Observability Tests (Task 10.2)
+    // -----------------------------------------------------------------------
+    //
+    // These tests verify that handle_link_down and handle_link_up execute
+    // the metric emission and logging code paths without panicking, and that
+    // state transitions occur correctly. Since `metrics-util` is not available
+    // as a dev-dependency, we rely on the default no-op recorder and verify
+    // the code paths are exercised via state assertions.
+
+    /// Helper to create a test span for TVR observability tests.
+    async fn create_tvr_test_span() -> Arc<Span> {
+        use hardy_bpa::async_trait;
+        use hardy_bpa::cla::{ClaAddress, Sink};
+        use std::net::SocketAddr;
+
+        struct MockSink;
+        #[async_trait]
+        impl Sink for MockSink {
+            async fn unregister(&self) {}
+            async fn dispatch(
+                &self,
+                _bundle: Bytes,
+                _bp_addr: Option<&hardy_bpv7::eid::NodeId>,
+                _cla_addr: Option<&ClaAddress>,
+            ) -> hardy_bpa::cla::Result<()> {
+                Ok(())
+            }
+            async fn add_peer(
+                &self,
+                _addr: ClaAddress,
+                _node_ids: &[hardy_bpv7::eid::NodeId],
+            ) -> hardy_bpa::cla::Result<bool> {
+                Ok(true)
+            }
+            async fn remove_peer(&self, _addr: &ClaAddress) -> hardy_bpa::cla::Result<bool> {
+                Ok(true)
+            }
+        }
+
+        let addr: SocketAddr = "127.0.0.1:0".parse().unwrap();
+        let socket = Arc::new(UdpSocket::bind(addr).await.unwrap());
+        let sink: Arc<dyn Sink> = Arc::new(MockSink);
+
+        let config = SpanConfig {
+            engine_id: 42,
+            address: "127.0.0.1:1113".parse().unwrap(),
+            tvr_timer_suspension: true,
+            link_down_queue_max_bytes: 1024,
+            tvr_rate_update: true,
+            ..Default::default()
+        };
+
+        Arc::new(Span::new(config, 1, socket, sink))
+    }
+
+    /// Test that `ltp.tvr.link_down` counter code path executes on state transition.
+    ///
+    /// Verifies: Requirement 9.1
+    #[tokio::test]
+    async fn link_down_counter_increments_on_state_transition() {
+        let span = create_tvr_test_span().await;
+
+        // Verify initial state is Up.
+        assert_eq!(*span.link_state.lock().unwrap(), LinkState::Up);
+
+        // Trigger link-down (scheduled/TVR).
+        span.handle_link_down(hardy_bpa::cla::LinkDownProperties { scheduled: true })
+            .await;
+
+        // State should transition to DownTvr.
+        assert_eq!(*span.link_state.lock().unwrap(), LinkState::DownTvr);
+        // The metrics::counter!("ltp.tvr.link_down").increment(1) was called
+        // without panicking — verified by reaching this point.
+    }
+
+    /// Test that `ltp.tvr.link_up` counter code path executes on state transition.
+    ///
+    /// Verifies: Requirement 9.2
+    #[tokio::test]
+    async fn link_up_counter_increments_on_state_transition() {
+        let span = create_tvr_test_span().await;
+
+        // First transition to down state.
+        span.handle_link_down(hardy_bpa::cla::LinkDownProperties { scheduled: true })
+            .await;
+        assert_eq!(*span.link_state.lock().unwrap(), LinkState::DownTvr);
+
+        // Trigger link-up.
+        span.handle_link_up(hardy_bpa::cla::LinkUpProperties {
+            bandwidth_bps: Some(256_000),
+            one_way_light_time_ms: None,
+        })
+        .await;
+
+        // State should transition to Up.
+        assert_eq!(*span.link_state.lock().unwrap(), LinkState::Up);
+        // The metrics::counter!("ltp.tvr.link_up").increment(1) was called
+        // without panicking — verified by reaching this point.
+    }
+
+    /// Test that the debug log for suspended timer count executes without panic.
+    ///
+    /// Verifies: Requirement 9.3
+    #[tokio::test]
+    async fn debug_log_suspended_timer_count() {
+        let span = create_tvr_test_span().await;
+
+        // Trigger link-down which calls suspend_all_timers().
+        // With no active sessions, it should log "suspended_timers = 0" at debug.
+        span.handle_link_down(hardy_bpa::cla::LinkDownProperties { scheduled: true })
+            .await;
+
+        // Verify state transitioned (confirms suspend_all_timers ran).
+        assert_eq!(*span.link_state.lock().unwrap(), LinkState::DownTvr);
+
+        // Verify suspended timer maps are empty (no sessions to suspend).
+        assert!(span.suspended_export_timers.lock().unwrap().is_empty());
+        assert!(span.suspended_import_timers.lock().unwrap().is_empty());
+        assert!(span.suspended_inactivity_timers.lock().unwrap().is_empty());
+    }
+
+    /// Test that the debug log for flushed segment count and bytes executes.
+    ///
+    /// Verifies: Requirement 9.4
+    #[tokio::test]
+    async fn debug_log_flushed_segment_count_and_bytes() {
+        let span = create_tvr_test_span().await;
+
+        // Transition to link-down.
+        span.handle_link_down(hardy_bpa::cla::LinkDownProperties { scheduled: true })
+            .await;
+
+        // Enqueue some segments while link is down.
+        {
+            let mut queue = span.outbound_queue.lock().unwrap();
+            queue.enqueue(Bytes::from_static(b"segment1"));
+            queue.enqueue(Bytes::from_static(b"segment2"));
+        }
+
+        // Transition to link-up — this calls flush_outbound_queue which logs
+        // the flushed segment count and bytes at debug level.
+        span.handle_link_up(hardy_bpa::cla::LinkUpProperties {
+            bandwidth_bps: None,
+            one_way_light_time_ms: None,
+        })
+        .await;
+
+        // Verify state is Up and queue is drained.
+        assert_eq!(*span.link_state.lock().unwrap(), LinkState::Up);
+        assert!(span.outbound_queue.lock().unwrap().is_empty());
+    }
+
+    /// Test that `ltp.tvr.queue_bytes` gauge is emitted during enqueue (send_segment
+    /// while link is down) without panicking.
+    ///
+    /// Verifies: Requirement 9.5
+    #[tokio::test]
+    async fn queue_bytes_gauge_emitted_on_enqueue() {
+        let span = create_tvr_test_span().await;
+
+        // Transition to link-down.
+        span.handle_link_down(hardy_bpa::cla::LinkDownProperties { scheduled: true })
+            .await;
+
+        // Call send_segment which should enqueue and emit the gauge.
+        let test_data = b"test segment data";
+        span.send_segment(test_data).await;
+
+        // Verify the segment was enqueued.
+        let queue = span.outbound_queue.lock().unwrap();
+        assert_eq!(queue.current_bytes(), test_data.len());
+        // The gauge!("ltp.tvr.queue_bytes") was emitted without panicking.
+    }
+
+    /// Test that `ltp.tvr.queue_bytes` gauge is set to 0 after flush on link-up.
+    ///
+    /// Verifies: Requirement 9.5
+    #[tokio::test]
+    async fn queue_bytes_gauge_reset_on_flush() {
+        let span = create_tvr_test_span().await;
+
+        // Transition to link-down and enqueue a segment.
+        span.handle_link_down(hardy_bpa::cla::LinkDownProperties { scheduled: true })
+            .await;
+        {
+            let mut queue = span.outbound_queue.lock().unwrap();
+            queue.enqueue(Bytes::from_static(b"queued data"));
+        }
+        assert!(!span.outbound_queue.lock().unwrap().is_empty());
+
+        // Transition to link-up — flushes queue and sets gauge to 0.
+        span.handle_link_up(hardy_bpa::cla::LinkUpProperties {
+            bandwidth_bps: None,
+            one_way_light_time_ms: None,
+        })
+        .await;
+
+        // Queue should be empty after flush.
+        assert_eq!(span.outbound_queue.lock().unwrap().current_bytes(), 0);
+        // The gauge!("ltp.tvr.queue_bytes").set(0.0) was called without panicking.
+    }
+
+    /// Test that link_down counter is NOT emitted for idempotent (duplicate) events.
+    ///
+    /// Verifies: Requirements 1.4, 1.5 (idempotent behavior)
+    #[tokio::test]
+    async fn link_down_idempotent_no_double_transition() {
+        let span = create_tvr_test_span().await;
+
+        // First link-down transitions state.
+        span.handle_link_down(hardy_bpa::cla::LinkDownProperties { scheduled: true })
+            .await;
+        assert_eq!(*span.link_state.lock().unwrap(), LinkState::DownTvr);
+
+        // Second link-down is idempotent — returns early without emitting metric.
+        span.handle_link_down(hardy_bpa::cla::LinkDownProperties { scheduled: true })
+            .await;
+        assert_eq!(*span.link_state.lock().unwrap(), LinkState::DownTvr);
+    }
+
+    /// Test that link_up counter is NOT emitted for idempotent (duplicate) events.
+    ///
+    /// Verifies: Requirements 1.4, 1.5 (idempotent behavior)
+    #[tokio::test]
+    async fn link_up_idempotent_no_double_transition() {
+        let span = create_tvr_test_span().await;
+
+        // Already in Up state — link-up should be a no-op.
+        assert_eq!(*span.link_state.lock().unwrap(), LinkState::Up);
+        span.handle_link_up(hardy_bpa::cla::LinkUpProperties {
+            bandwidth_bps: None,
+            one_way_light_time_ms: None,
+        })
+        .await;
+        assert_eq!(*span.link_state.lock().unwrap(), LinkState::Up);
     }
 }

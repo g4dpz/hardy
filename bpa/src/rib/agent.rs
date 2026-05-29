@@ -1,4 +1,5 @@
 use super::*;
+use crate::cla::{LinkDownProperties, LinkUpProperties};
 use hardy_eid_patterns::EidPattern;
 
 pub(crate) struct Agent {
@@ -43,6 +44,14 @@ impl routes::RoutingSink for Sink {
             .rib
             .remove(pattern, &agent.name, action.clone().into(), priority)
             .await)
+    }
+
+    async fn notify_link_up(&self, engine_id: u64, properties: LinkUpProperties) {
+        self.rib.notify_link_up(engine_id, properties).await;
+    }
+
+    async fn notify_link_down(&self, engine_id: u64, properties: LinkDownProperties) {
+        self.rib.notify_link_down(engine_id, properties).await;
     }
 }
 

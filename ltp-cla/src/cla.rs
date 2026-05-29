@@ -3,7 +3,8 @@
 
 //! CLA trait implementation for LTP.
 //!
-//! Implements [`hardy_bpa::cla::Cla`] to integrate LTP with the BPA.
+//! Implements [`hardy_bpa::cla::Cla`] and [`hardy_bpa::cla::LinkStateNotifier`]
+//! to integrate LTP with the BPA.
 
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
@@ -11,7 +12,10 @@ use std::sync::{Arc, OnceLock};
 use bytes::Bytes;
 use hardy_async::CancellationToken;
 use hardy_bpa::async_trait;
-use hardy_bpa::cla::{Cla, ClaAddress, ClaAddressType, ForwardBundleResult, Sink};
+use hardy_bpa::cla::{
+    Cla, ClaAddress, ClaAddressType, ForwardBundleResult, LinkDownProperties, LinkStateNotifier,
+    LinkUpProperties, Sink,
+};
 use tokio::net::UdpSocket;
 use tracing::{debug, error, info, warn};
 
@@ -29,6 +33,39 @@ struct Inner {
     spans: HashMap<u64, Arc<Span>>,
     /// Cancellation token for the receive task.
     cancel_token: CancellationToken,
+}
+
+/// A lightweight link state notifier that dispatches events to spans.
+///
+/// Created during CLA registration and registered with the BPA for each
+/// configured span's engine ID. Holds a shared reference to the span map
+/// so that link events from routing agents are dispatched to the correct span.
+struct SpanLinkNotifier {
+    /// Map of remote engine ID → Span state (shared with the CLA).
+    spans: Arc<HashMap<u64, Arc<Span>>>,
+}
+
+#[async_trait]
+impl LinkStateNotifier for SpanLinkNotifier {
+    async fn on_link_up(&self, remote_engine_id: u64, properties: LinkUpProperties) {
+        let Some(span) = self.spans.get(&remote_engine_id).cloned() else {
+            debug!(
+                "LTP CLA: link-up event for unknown engine ID {remote_engine_id}, ignoring"
+            );
+            return;
+        };
+        span.handle_link_up(properties).await;
+    }
+
+    async fn on_link_down(&self, remote_engine_id: u64, properties: LinkDownProperties) {
+        let Some(span) = self.spans.get(&remote_engine_id).cloned() else {
+            debug!(
+                "LTP CLA: link-down event for unknown engine ID {remote_engine_id}, ignoring"
+            );
+            return;
+        };
+        span.handle_link_down(properties).await;
+    }
 }
 
 /// LTP Convergence Layer Adapter.
@@ -55,6 +92,37 @@ impl LtpCla {
     /// Get the inner state, if registered.
     fn inner(&self) -> Option<&Inner> {
         self.inner.get()
+    }
+
+    /// Look up a span by remote engine ID.
+    ///
+    /// Returns `None` if the CLA is not yet registered or no span is
+    /// configured for the given engine ID.
+    fn find_span(&self, remote_engine_id: u64) -> Option<Arc<Span>> {
+        self.inner()?.spans.get(&remote_engine_id).cloned()
+    }
+}
+
+#[async_trait]
+impl LinkStateNotifier for LtpCla {
+    async fn on_link_up(&self, remote_engine_id: u64, properties: LinkUpProperties) {
+        let Some(span) = self.find_span(remote_engine_id) else {
+            debug!(
+                "LTP CLA: link-up event for unknown engine ID {remote_engine_id}, ignoring"
+            );
+            return;
+        };
+        span.handle_link_up(properties).await;
+    }
+
+    async fn on_link_down(&self, remote_engine_id: u64, properties: LinkDownProperties) {
+        let Some(span) = self.find_span(remote_engine_id) else {
+            debug!(
+                "LTP CLA: link-down event for unknown engine ID {remote_engine_id}, ignoring"
+            );
+            return;
+        };
+        span.handle_link_down(properties).await;
     }
 }
 
@@ -142,6 +210,18 @@ impl Cla for LtpCla {
         tokio::spawn(crate::engine::run_receive_loop(
             rx_socket, rx_spans, rx_sink, rx_cancel,
         ));
+
+        // Register as a LinkStateNotifier for each configured span's engine ID.
+        // This allows routing agents (e.g., TVR) to notify the CLA of link state
+        // changes via the BPA registry.
+        let notifier_spans = Arc::new(spans.clone());
+        for &engine_id in spans.keys() {
+            let notifier: Arc<dyn LinkStateNotifier> = Arc::new(SpanLinkNotifier {
+                spans: notifier_spans.clone(),
+            });
+            sink.register_link_notifier(engine_id, notifier);
+            debug!("LTP CLA: registered link notifier for engine {engine_id}");
+        }
 
         // Store the inner state.
         let _ = self.inner.set(Inner {

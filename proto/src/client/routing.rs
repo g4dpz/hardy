@@ -62,6 +62,14 @@ impl hardy_bpa::routes::RoutingSink for Sink {
     async fn unregister(&self) {
         self.proxy.shutdown().await;
     }
+
+    async fn notify_link_up(&self, _engine_id: u64, _properties: hardy_bpa::LinkUpProperties) {
+        // TODO: Forward link-up notification over gRPC
+    }
+
+    async fn notify_link_down(&self, _engine_id: u64, _properties: hardy_bpa::LinkDownProperties) {
+        // TODO: Forward link-down notification over gRPC
+    }
 }
 
 struct Handler {

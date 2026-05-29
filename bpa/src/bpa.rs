@@ -294,6 +294,27 @@ impl Bpa {
     ) -> Result<Option<Filter>, filter::Error> {
         self.filter_engine.unregister(hook, name)
     }
+
+    /// Register a [`LinkStateNotifier`](cla::LinkStateNotifier) for a specific engine ID.
+    ///
+    /// CLAs call this during their `on_register` to advertise their ability to receive
+    /// link state events for configured spans. When a routing agent emits link events
+    /// via its [`RoutingSink`](routes::RoutingSink), the BPA dispatches them to the
+    /// registered notifier for the matching engine ID.
+    pub fn register_link_notifier(
+        &self,
+        engine_id: u64,
+        notifier: Arc<dyn cla::LinkStateNotifier>,
+    ) {
+        self.rib.register_link_notifier(engine_id, notifier);
+    }
+
+    /// Unregister a [`LinkStateNotifier`](cla::LinkStateNotifier) for a specific engine ID.
+    ///
+    /// Called during CLA unregistration to clean up link event subscriptions.
+    pub fn unregister_link_notifier(&self, engine_id: u64) {
+        self.rib.unregister_link_notifier(engine_id);
+    }
 }
 
 #[async_trait]

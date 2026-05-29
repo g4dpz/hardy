@@ -6,6 +6,7 @@
 //! Implements the sender-side LTP session that segments a block into data
 //! segments, handles report acknowledgements, and manages retransmission.
 
+use std::collections::HashSet;
 use std::time::Duration;
 
 use bytes::{Bytes, BytesMut};
@@ -45,6 +46,18 @@ pub enum ExportAction {
         checkpoint_serial: u64,
         /// How long to wait before considering the checkpoint unacknowledged.
         duration: Duration,
+    },
+    /// Suspend a running timer, recording its remaining duration.
+    SuspendTimer {
+        /// The checkpoint serial number whose timer should be suspended.
+        checkpoint_serial: u64,
+    },
+    /// Resume a previously suspended timer.
+    ResumeTimer {
+        /// The checkpoint serial number whose timer should be resumed.
+        checkpoint_serial: u64,
+        /// The remaining duration to schedule for the resumed timer.
+        remaining: Duration,
     },
 }
 
@@ -87,6 +100,12 @@ pub struct ExportSession {
     /// Acknowledged byte extents. Tracks the cumulative set of bytes the
     /// receiver has confirmed using a sorted, merging extent map.
     acknowledged: ExtentMap,
+    /// Checkpoint serial numbers that currently have active (running) timers.
+    /// A serial is added when a `StartTimer` action is emitted and removed
+    /// when the timer expires (`on_timer_expired`) or is suspended.
+    active_timers: HashSet<u64>,
+    /// Whether timers are currently suspended (prevents double-suspend).
+    timers_suspended: bool,
 }
 
 impl ExportSession {
@@ -250,9 +269,22 @@ impl ExportSession {
             next_checkpoint_serial,
             retry_count: 0,
             acknowledged: ExtentMap::new(),
+            active_timers: HashSet::new(),
+            timers_suspended: false,
         };
 
-        (session, actions)
+        // Track which checkpoint serials have active timers
+        let mut session_with_timers = session;
+        for action in &actions {
+            if let ExportAction::StartTimer {
+                checkpoint_serial, ..
+            } = action
+            {
+                session_with_timers.active_timers.insert(*checkpoint_serial);
+            }
+        }
+
+        (session_with_timers, actions)
     }
 
     /// Returns the current state of the export session.
@@ -334,6 +366,7 @@ impl ExportSession {
         let block_len = self.block.len() as u64;
         if self.acknowledged.is_complete(0, block_len) {
             self.state = ExportState::Complete;
+            self.active_timers.clear();
             return actions;
         }
 
@@ -363,6 +396,7 @@ impl ExportSession {
                 actions.push(ExportAction::SendSegment(buf.freeze()));
 
                 self.state = ExportState::Cancelled;
+                self.active_timers.clear();
                 return actions;
             }
         }
@@ -421,6 +455,7 @@ impl ExportSession {
                         checkpoint_serial: ckpt.serial,
                         duration: self.config.retransmit_timeout,
                     });
+                    self.active_timers.insert(ckpt.serial);
                 }
 
                 offset += seg_len as u64;
@@ -446,6 +481,9 @@ impl ExportSession {
             return actions;
         }
 
+        // The expired timer is no longer active
+        self.active_timers.remove(&_checkpoint_serial);
+
         // Increment retry count
         self.retry_count += 1;
 
@@ -463,6 +501,7 @@ impl ExportSession {
             actions.push(ExportAction::SendSegment(buf.freeze()));
 
             self.state = ExportState::Cancelled;
+            self.active_timers.clear();
             return actions;
         }
 
@@ -482,6 +521,7 @@ impl ExportSession {
                 actions.push(ExportAction::SendSegment(buf.freeze()));
 
                 self.state = ExportState::Cancelled;
+                self.active_timers.clear();
                 return actions;
             }
         }
@@ -549,6 +589,7 @@ impl ExportSession {
                         checkpoint_serial: ckpt.serial,
                         duration: self.config.retransmit_timeout,
                     });
+                    self.active_timers.insert(ckpt.serial);
                 }
 
                 offset += seg_len as u64;
@@ -577,7 +618,71 @@ impl ExportSession {
         actions.push(ExportAction::SendSegment(buf.freeze()));
 
         self.state = ExportState::Cancelled;
+        self.active_timers.clear();
         actions
+    }
+
+    /// Suspend all active timers. Returns actions describing which timers
+    /// to suspend. The caller is responsible for recording remaining durations.
+    ///
+    /// If timers are already suspended or the session is complete/cancelled,
+    /// returns an empty vec.
+    pub fn suspend_timers(&mut self) -> Vec<ExportAction> {
+        // Don't double-suspend, and don't suspend if session is done
+        if self.timers_suspended
+            || self.state == ExportState::Complete
+            || self.state == ExportState::Cancelled
+        {
+            return Vec::new();
+        }
+
+        let actions: Vec<ExportAction> = self
+            .active_timers
+            .iter()
+            .map(|&checkpoint_serial| ExportAction::SuspendTimer { checkpoint_serial })
+            .collect();
+
+        self.timers_suspended = true;
+        actions
+    }
+
+    /// Resume previously suspended timers. Called with the remaining durations
+    /// that were recorded during suspension.
+    ///
+    /// Returns `ResumeTimer` actions for each checkpoint serial that still
+    /// exists in this session's active timer set. Checkpoint serials that are
+    /// no longer valid (e.g., session was cancelled between suspend and resume)
+    /// are silently skipped.
+    pub fn resume_timers(&mut self, suspended: &[(u64, Duration)]) -> Vec<ExportAction> {
+        // Nothing to resume if not currently suspended or session is done
+        if !self.timers_suspended
+            || self.state == ExportState::Complete
+            || self.state == ExportState::Cancelled
+        {
+            return Vec::new();
+        }
+
+        let actions: Vec<ExportAction> = suspended
+            .iter()
+            .filter(|(serial, _)| self.active_timers.contains(serial))
+            .map(|&(checkpoint_serial, remaining)| ExportAction::ResumeTimer {
+                checkpoint_serial,
+                remaining,
+            })
+            .collect();
+
+        self.timers_suspended = false;
+        actions
+    }
+
+    /// Returns whether timers are currently suspended.
+    pub fn timers_suspended(&self) -> bool {
+        self.timers_suspended
+    }
+
+    /// Returns the set of checkpoint serials with active timers.
+    pub fn active_timer_serials(&self) -> &HashSet<u64> {
+        &self.active_timers
     }
 
     // -----------------------------------------------------------------------
@@ -1916,5 +2021,315 @@ mod tests {
         assert_eq!(segment_types[4], SegmentType::RedEob);
         // Only 1 timer (for the EOB checkpoint)
         assert_eq!(count_start_timers(&actions), 1);
+    }
+
+    // -----------------------------------------------------------------------
+    // suspend_timers / resume_timers tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn suspend_timers_returns_suspend_actions_for_active_timers() {
+        let (mut session, _actions) = ExportSession::new(
+            session_id(),
+            Bytes::from(vec![0xAB; 200]),
+            1,
+            default_config(),
+        );
+
+        // Session should have 1 active timer (the EOB checkpoint)
+        assert_eq!(session.active_timer_serials().len(), 1);
+        assert!(!session.timers_suspended());
+
+        let suspend_actions = session.suspend_timers();
+        assert_eq!(suspend_actions.len(), 1);
+        match &suspend_actions[0] {
+            ExportAction::SuspendTimer {
+                checkpoint_serial, ..
+            } => {
+                assert!(session.active_timer_serials().contains(checkpoint_serial));
+            }
+            _ => panic!("Expected SuspendTimer action"),
+        }
+        assert!(session.timers_suspended());
+    }
+
+    #[test]
+    fn suspend_timers_double_suspend_is_noop() {
+        let (mut session, _) = ExportSession::new(
+            session_id(),
+            Bytes::from(vec![0xAB; 200]),
+            1,
+            default_config(),
+        );
+
+        let first = session.suspend_timers();
+        assert_eq!(first.len(), 1);
+
+        // Second suspend should be a no-op
+        let second = session.suspend_timers();
+        assert!(second.is_empty());
+    }
+
+    #[test]
+    fn suspend_timers_noop_when_complete() {
+        let (mut session, _) = ExportSession::new(
+            session_id(),
+            Bytes::from(vec![0xAB; 200]),
+            1,
+            default_config(),
+        );
+
+        // Complete the session
+        let claims = vec![ReceptionClaim {
+            offset: 0,
+            length: 200,
+        }];
+        let _ = session.on_report(1, 1, 200, 0, &claims);
+        assert_eq!(session.state(), ExportState::Complete);
+
+        let actions = session.suspend_timers();
+        assert!(actions.is_empty());
+    }
+
+    #[test]
+    fn suspend_timers_noop_when_cancelled() {
+        let (mut session, _) = ExportSession::new(
+            session_id(),
+            Bytes::from(vec![0xAB; 200]),
+            1,
+            default_config(),
+        );
+
+        session.on_cancel_from_receiver(CancelReason::ByUser);
+        assert_eq!(session.state(), ExportState::Cancelled);
+
+        let actions = session.suspend_timers();
+        assert!(actions.is_empty());
+    }
+
+    #[test]
+    fn suspend_timers_multiple_active_timers() {
+        // Use intermediate checkpoints to get multiple active timers
+        let block = Bytes::from(vec![0xAB; 400]);
+        let config = ExportConfig {
+            max_segment_size: 100,
+            max_retransmissions: 5,
+            retransmit_timeout: Duration::from_secs(30),
+            checkpoint_every_n: 2,
+            max_checkpoints: None,
+            green: false,
+        };
+        let (mut session, _) = ExportSession::new(session_id(), block, 1, config);
+
+        // With checkpoint_every_n=2 and 4 segments, we get:
+        // seg0: RedData, seg1: RedCheckpoint (serial 1), seg2: RedData, seg3: RedEob (serial 2)
+        // So 2 active timers
+        assert_eq!(session.active_timer_serials().len(), 2);
+
+        let suspend_actions = session.suspend_timers();
+        assert_eq!(suspend_actions.len(), 2);
+
+        for action in &suspend_actions {
+            match action {
+                ExportAction::SuspendTimer { .. } => {}
+                _ => panic!("Expected SuspendTimer action, got {:?}", action),
+            }
+        }
+    }
+
+    #[test]
+    fn resume_timers_returns_resume_actions() {
+        let (mut session, _) = ExportSession::new(
+            session_id(),
+            Bytes::from(vec![0xAB; 200]),
+            1,
+            default_config(),
+        );
+
+        // Suspend first
+        let suspend_actions = session.suspend_timers();
+        assert_eq!(suspend_actions.len(), 1);
+
+        let checkpoint_serial = match &suspend_actions[0] {
+            ExportAction::SuspendTimer {
+                checkpoint_serial, ..
+            } => *checkpoint_serial,
+            _ => panic!("Expected SuspendTimer"),
+        };
+
+        // Resume with remaining duration
+        let remaining = Duration::from_secs(15);
+        let resume_actions = session.resume_timers(&[(checkpoint_serial, remaining)]);
+        assert_eq!(resume_actions.len(), 1);
+
+        match &resume_actions[0] {
+            ExportAction::ResumeTimer {
+                checkpoint_serial: serial,
+                remaining: dur,
+            } => {
+                assert_eq!(*serial, checkpoint_serial);
+                assert_eq!(*dur, remaining);
+            }
+            _ => panic!("Expected ResumeTimer action"),
+        }
+
+        // Should no longer be suspended
+        assert!(!session.timers_suspended());
+    }
+
+    #[test]
+    fn resume_timers_skips_unknown_serials() {
+        let (mut session, _) = ExportSession::new(
+            session_id(),
+            Bytes::from(vec![0xAB; 200]),
+            1,
+            default_config(),
+        );
+
+        session.suspend_timers();
+
+        // Try to resume with a serial that doesn't exist
+        let resume_actions = session.resume_timers(&[(999, Duration::from_secs(10))]);
+        assert!(resume_actions.is_empty());
+        assert!(!session.timers_suspended());
+    }
+
+    #[test]
+    fn resume_timers_noop_when_not_suspended() {
+        let (mut session, _) = ExportSession::new(
+            session_id(),
+            Bytes::from(vec![0xAB; 200]),
+            1,
+            default_config(),
+        );
+
+        // Don't suspend first — resume should be a no-op
+        let resume_actions = session.resume_timers(&[(1, Duration::from_secs(10))]);
+        assert!(resume_actions.is_empty());
+    }
+
+    #[test]
+    fn resume_timers_noop_when_cancelled() {
+        let (mut session, _) = ExportSession::new(
+            session_id(),
+            Bytes::from(vec![0xAB; 200]),
+            1,
+            default_config(),
+        );
+
+        session.suspend_timers();
+        session.on_cancel_from_receiver(CancelReason::ByUser);
+
+        // Session cancelled between suspend and resume — should be no-op
+        let resume_actions = session.resume_timers(&[(1, Duration::from_secs(10))]);
+        assert!(resume_actions.is_empty());
+    }
+
+    #[test]
+    fn resume_timers_partial_match() {
+        // Create session with multiple timers
+        let block = Bytes::from(vec![0xAB; 400]);
+        let config = ExportConfig {
+            max_segment_size: 100,
+            max_retransmissions: 5,
+            retransmit_timeout: Duration::from_secs(30),
+            checkpoint_every_n: 2,
+            max_checkpoints: None,
+            green: false,
+        };
+        let (mut session, _) = ExportSession::new(session_id(), block, 1, config);
+
+        let serials: Vec<u64> = session.active_timer_serials().iter().copied().collect();
+        assert_eq!(serials.len(), 2);
+
+        session.suspend_timers();
+
+        // Resume with one valid serial and one invalid
+        let resume_input: Vec<(u64, Duration)> = vec![
+            (serials[0], Duration::from_secs(10)),
+            (999, Duration::from_secs(5)), // invalid serial
+        ];
+        let resume_actions = session.resume_timers(&resume_input);
+
+        // Only the valid serial should produce a ResumeTimer action
+        assert_eq!(resume_actions.len(), 1);
+        match &resume_actions[0] {
+            ExportAction::ResumeTimer {
+                checkpoint_serial,
+                remaining,
+            } => {
+                assert_eq!(*checkpoint_serial, serials[0]);
+                assert_eq!(*remaining, Duration::from_secs(10));
+            }
+            _ => panic!("Expected ResumeTimer"),
+        }
+    }
+
+    #[test]
+    fn suspend_timers_green_session_is_noop() {
+        let block = Bytes::from(vec![0xAB; 200]);
+        let config = green_config();
+        let (mut session, _) = ExportSession::new(session_id(), block, 1, config);
+
+        // Green sessions are immediately Complete, so suspend is a no-op
+        assert_eq!(session.state(), ExportState::Complete);
+        let actions = session.suspend_timers();
+        assert!(actions.is_empty());
+    }
+
+    #[test]
+    fn active_timers_cleared_on_full_ack() {
+        let (mut session, _) = ExportSession::new(
+            session_id(),
+            Bytes::from(vec![0xAB; 200]),
+            1,
+            default_config(),
+        );
+
+        assert!(!session.active_timer_serials().is_empty());
+
+        // Fully acknowledge
+        let claims = vec![ReceptionClaim {
+            offset: 0,
+            length: 200,
+        }];
+        let _ = session.on_report(1, 1, 200, 0, &claims);
+        assert_eq!(session.state(), ExportState::Complete);
+        assert!(session.active_timer_serials().is_empty());
+    }
+
+    #[test]
+    fn active_timers_cleared_on_cancel() {
+        let (mut session, _) = ExportSession::new(
+            session_id(),
+            Bytes::from(vec![0xAB; 200]),
+            1,
+            default_config(),
+        );
+
+        assert!(!session.active_timer_serials().is_empty());
+        session.on_cancel_from_receiver(CancelReason::ByUser);
+        assert!(session.active_timer_serials().is_empty());
+    }
+
+    #[test]
+    fn timer_expired_removes_from_active_set() {
+        let (mut session, _) = ExportSession::new(
+            session_id(),
+            Bytes::from(vec![0xAB; 200]),
+            1,
+            default_config(),
+        );
+
+        // The initial checkpoint serial is 1
+        assert!(session.active_timer_serials().contains(&1));
+
+        // Timer expires for serial 1
+        let _ = session.on_timer_expired(1);
+
+        // Serial 1 should no longer be active (but a new one was created)
+        assert!(!session.active_timer_serials().contains(&1));
+        // A new timer was started for the retransmission checkpoint
+        assert!(!session.active_timer_serials().is_empty());
     }
 }

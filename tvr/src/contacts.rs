@@ -20,6 +20,9 @@ pub struct Contact {
     pub bandwidth_bps: Option<u64>,
     // Optional one-way link delay in microseconds.
     pub delay_us: Option<u32>,
+    // Optional LTP engine ID for the remote peer. When present, the scheduler
+    // emits link-up/link-down notifications to the BPA on contact activation/deactivation.
+    pub engine_id: Option<u64>,
 }
 
 // Time window for a contact.

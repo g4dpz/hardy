@@ -109,6 +109,18 @@ impl cla::Sink for Sink {
             )
             .await)
     }
+
+    fn register_link_notifier(
+        &self,
+        engine_id: u64,
+        notifier: Arc<dyn cla::LinkStateNotifier>,
+    ) {
+        self.registry.rib.register_link_notifier(engine_id, notifier);
+    }
+
+    fn unregister_link_notifier(&self, engine_id: u64) {
+        self.registry.rib.unregister_link_notifier(engine_id);
+    }
 }
 
 impl Drop for Sink {

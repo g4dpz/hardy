@@ -262,6 +262,12 @@ mod tests {
         ) -> hardy_bpa::routes::Result<bool> {
             Ok(true)
         }
+
+        async fn notify_link_up(&self, _engine_id: u64, _properties: hardy_bpa::LinkUpProperties) {
+        }
+
+        async fn notify_link_down(&self, _engine_id: u64, _properties: hardy_bpa::LinkDownProperties) {
+        }
     }
 
     // A mock sink whose `unregister()` re-enters `agent.on_unregister()`,
@@ -292,6 +298,12 @@ mod tests {
             _priority: u32,
         ) -> hardy_bpa::routes::Result<bool> {
             Ok(true)
+        }
+
+        async fn notify_link_up(&self, _engine_id: u64, _properties: hardy_bpa::LinkUpProperties) {
+        }
+
+        async fn notify_link_down(&self, _engine_id: u64, _properties: hardy_bpa::LinkDownProperties) {
         }
     }
 

@@ -282,6 +282,59 @@ pub trait Sink: Send + Sync {
     /// Notifies the BPA that a peer is no longer reachable at a given `ClaAddress`.
     /// The BPA will update its routing information to remove all paths through this address.
     async fn remove_peer(&self, cla_addr: &ClaAddress) -> Result<bool>;
+
+    /// Register a [`LinkStateNotifier`] for a specific engine ID.
+    ///
+    /// CLAs call this during `on_register` to advertise their ability to receive
+    /// link state events for their configured spans. When a routing agent emits
+    /// link events, the BPA dispatches them to the registered notifier for the
+    /// matching engine ID.
+    ///
+    /// The default implementation is a no-op (for test mocks and CLAs that don't
+    /// need link state notifications).
+    fn register_link_notifier(
+        &self,
+        _engine_id: u64,
+        _notifier: Arc<dyn LinkStateNotifier>,
+    ) {
+    }
+
+    /// Unregister a [`LinkStateNotifier`] for a specific engine ID.
+    ///
+    /// Called during CLA unregistration to clean up link event subscriptions.
+    ///
+    /// The default implementation is a no-op.
+    fn unregister_link_notifier(&self, _engine_id: u64) {}
+}
+
+/// Properties carried with a link-up event.
+#[derive(Debug, Clone, Default)]
+pub struct LinkUpProperties {
+    /// Optional bandwidth in bits per second for this contact window.
+    pub bandwidth_bps: Option<u64>,
+    /// Optional one-way light time in milliseconds.
+    pub one_way_light_time_ms: Option<u64>,
+}
+
+/// Properties carried with a link-down event.
+#[derive(Debug, Clone, Default)]
+pub struct LinkDownProperties {
+    /// Whether this is a scheduled (TVR) or unscheduled (ping) event.
+    pub scheduled: bool,
+}
+
+/// Trait for CLAs that want to receive link state notifications.
+///
+/// CLAs implement this trait and register their interest in specific
+/// engine IDs during `on_register`. The BPA dispatches link events
+/// from routing agents to the appropriate CLA.
+#[async_trait]
+pub trait LinkStateNotifier: Send + Sync {
+    /// Called when a link to the specified remote engine transitions to up.
+    async fn on_link_up(&self, remote_engine_id: u64, properties: LinkUpProperties);
+
+    /// Called when a link to the specified remote engine transitions to down.
+    async fn on_link_down(&self, remote_engine_id: u64, properties: LinkDownProperties);
 }
 
 #[cfg(test)]
