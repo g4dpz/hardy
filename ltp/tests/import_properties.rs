@@ -481,7 +481,7 @@ proptest! {
         // Ensure actual_id is different from expected_id
         let actual_id = if expected_id + actual_id_offset > 200 {
             // Wrap around to ensure it's different
-            expected_id.wrapping_sub(actual_id_offset).max(0)
+            expected_id.wrapping_sub(actual_id_offset)
         } else {
             expected_id + actual_id_offset
         };

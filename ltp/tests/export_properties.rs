@@ -133,7 +133,7 @@ fn arb_block_with_partial_claims() -> impl Strategy<Value = (Vec<u8>, usize, Vec
         })
         .prop_flat_map(|(block_data, max_segment_size, chunk_size)| {
             let block_len = block_data.len() as u64;
-            let num_chunks = ((block_len + chunk_size - 1) / chunk_size) as usize;
+            let num_chunks = block_len.div_ceil(chunk_size) as usize;
             // Generate a boolean mask for each chunk (true = acknowledged)
             let mask_strategy = prop::collection::vec(any::<bool>(), num_chunks..=num_chunks);
             (
@@ -442,14 +442,12 @@ fn extract_checkpoint_serials(actions: &[ExportAction]) -> Vec<u64> {
     for action in actions {
         if let ExportAction::SendSegment(wire_bytes) = action {
             let mut reader = &wire_bytes[..];
-            if let Ok(seg) = segment::decode(&mut reader) {
-                if let Segment::Data {
-                    checkpoint: Some(CheckpointInfo { serial, .. }),
-                    ..
-                } = seg
-                {
-                    serials.push(serial);
-                }
+            if let Ok(Segment::Data {
+                checkpoint: Some(CheckpointInfo { serial, .. }),
+                ..
+            }) = segment::decode(&mut reader)
+            {
+                serials.push(serial);
             }
         }
     }

@@ -1096,7 +1096,7 @@ mod import_session_tests {
     #[test]
     fn eob_with_full_coverage_delivers_block() {
         let mut session = ImportSession::new(session_id(), default_config());
-        let data = vec![0xAB; 200];
+        let data = [0xAB; 200];
 
         // Send first half as plain red data
         let _ = session.on_data_segment(SegmentType::RedData, 1, 0, &data[..100], None);
@@ -1176,7 +1176,7 @@ mod import_session_tests {
             SegmentType::RedEob,
             1,
             100,
-            &vec![0xBB; 100],
+            &[0xBB; 100],
             Some(CheckpointInfo {
                 serial: 1,
                 responding_report_serial: 0,
@@ -1185,7 +1185,7 @@ mod import_session_tests {
         assert_eq!(session.state(), ImportState::Receiving);
 
         // Now send first half (plain red data)
-        let actions = session.on_data_segment(SegmentType::RedData, 1, 0, &vec![0xAA; 100], None);
+        let actions = session.on_data_segment(SegmentType::RedData, 1, 0, &[0xAA; 100], None);
 
         // Now complete
         assert_eq!(session.state(), ImportState::Complete);
@@ -1488,14 +1488,12 @@ mod import_session_tests {
         let mut session = ImportSession::new(session_id(), default_config());
 
         // Send first half as GreenData
-        let actions1 =
-            session.on_data_segment(SegmentType::GreenData, 1, 0, &vec![0xAA; 100], None);
+        let actions1 = session.on_data_segment(SegmentType::GreenData, 1, 0, &[0xAA; 100], None);
         assert!(actions1.is_empty());
         assert_eq!(session.state(), ImportState::Receiving);
 
         // Send second half as GreenEob
-        let actions2 =
-            session.on_data_segment(SegmentType::GreenEob, 1, 100, &vec![0xBB; 100], None);
+        let actions2 = session.on_data_segment(SegmentType::GreenEob, 1, 100, &[0xBB; 100], None);
 
         assert_eq!(session.state(), ImportState::Complete);
         assert!(has_deliver_block(&actions2));
@@ -1512,12 +1510,12 @@ mod import_session_tests {
         let mut session = ImportSession::new(session_id(), default_config());
 
         // Send segment at offset 0 (covers [0, 50))
-        let _ = session.on_data_segment(SegmentType::GreenData, 1, 0, &vec![0xAA; 50], None);
+        let _ = session.on_data_segment(SegmentType::GreenData, 1, 0, &[0xAA; 50], None);
 
         // Skip offset 50..100 (gap!)
 
         // Send Green-EOB at offset 100 (covers [100, 150))
-        let actions = session.on_data_segment(SegmentType::GreenEob, 1, 100, &vec![0xCC; 50], None);
+        let actions = session.on_data_segment(SegmentType::GreenEob, 1, 100, &[0xCC; 50], None);
 
         // Green delivers whatever data received up to EOB, even with gaps
         assert_eq!(session.state(), ImportState::Complete);
@@ -1539,11 +1537,11 @@ mod import_session_tests {
         let mut session = ImportSession::new(session_id(), default_config());
 
         // Send second segment first (out of order)
-        let _ = session.on_data_segment(SegmentType::GreenData, 1, 100, &vec![0xBB; 100], None);
+        let _ = session.on_data_segment(SegmentType::GreenData, 1, 100, &[0xBB; 100], None);
         assert_eq!(session.state(), ImportState::Receiving);
 
         // Send Green-EOB at offset 200
-        let actions = session.on_data_segment(SegmentType::GreenEob, 1, 200, &vec![0xCC; 50], None);
+        let actions = session.on_data_segment(SegmentType::GreenEob, 1, 200, &[0xCC; 50], None);
 
         // Delivers whatever we have up to offset 250 (even with gap at 0..100)
         assert_eq!(session.state(), ImportState::Complete);
@@ -1565,13 +1563,11 @@ mod import_session_tests {
 
         // Send multiple green data segments
         for i in 0..5u64 {
-            let _ =
-                session.on_data_segment(SegmentType::GreenData, 1, i * 100, &vec![0xAB; 100], None);
+            let _ = session.on_data_segment(SegmentType::GreenData, 1, i * 100, &[0xAB; 100], None);
         }
 
         // Finish with Green-EOB
-        let actions =
-            session.on_data_segment(SegmentType::GreenEob, 1, 500, &vec![0xAB; 100], None);
+        let actions = session.on_data_segment(SegmentType::GreenEob, 1, 500, &[0xAB; 100], None);
 
         // No reports should have been generated at any point
         assert_eq!(session.reports_generated(), 0);
@@ -2230,7 +2226,7 @@ mod import_session_tests {
             SegmentType::RedEob,
             1,
             100,
-            &vec![0xBB; 100],
+            &[0xBB; 100],
             Some(CheckpointInfo {
                 serial: 1,
                 responding_report_serial: 0,
@@ -2239,7 +2235,7 @@ mod import_session_tests {
         assert_eq!(session.state(), ImportState::Receiving);
 
         // Now send first half as plain RedData (NOT a checkpoint) — completes the block
-        let actions = session.on_data_segment(SegmentType::RedData, 1, 0, &vec![0xAA; 100], None);
+        let actions = session.on_data_segment(SegmentType::RedData, 1, 0, &[0xAA; 100], None);
 
         // Block should be complete
         assert_eq!(session.state(), ImportState::Complete);
@@ -2287,14 +2283,14 @@ mod import_session_tests {
         let mut session = ImportSession::new(session_id(), default_config());
 
         // Send first half as plain RedData
-        let _ = session.on_data_segment(SegmentType::RedData, 1, 0, &vec![0xAA; 100], None);
+        let _ = session.on_data_segment(SegmentType::RedData, 1, 0, &[0xAA; 100], None);
 
         // Send second half as EOB (checkpoint) — this completes the block
         let actions = session.on_data_segment(
             SegmentType::RedEob,
             1,
             100,
-            &vec![0xBB; 100],
+            &[0xBB; 100],
             Some(CheckpointInfo {
                 serial: 1,
                 responding_report_serial: 0,
@@ -2336,7 +2332,7 @@ mod import_session_tests {
             SegmentType::RedCheckpoint,
             1,
             50,
-            &vec![0xBB; 50],
+            &[0xBB; 50],
             Some(CheckpointInfo {
                 serial: 1,
                 responding_report_serial: 0,
@@ -2349,7 +2345,7 @@ mod import_session_tests {
             SegmentType::RedEorp,
             1,
             100,
-            &vec![0xCC; 50],
+            &[0xCC; 50],
             Some(CheckpointInfo {
                 serial: 2,
                 responding_report_serial: 0,
@@ -2358,7 +2354,7 @@ mod import_session_tests {
         assert_eq!(session.reports_generated(), 2);
 
         // Now fill the gap with plain RedData — triggers unsolicited RS
-        let actions = session.on_data_segment(SegmentType::RedData, 1, 0, &vec![0xAA; 50], None);
+        let actions = session.on_data_segment(SegmentType::RedData, 1, 0, &[0xAA; 50], None);
 
         assert_eq!(session.state(), ImportState::Complete);
         assert_eq!(session.reports_generated(), 3);
@@ -2386,10 +2382,10 @@ mod import_session_tests {
         let mut session = ImportSession::new(session_id(), default_config());
 
         // Green sessions never generate reports
-        let _ = session.on_data_segment(SegmentType::GreenData, 1, 100, &vec![0xBB; 100], None);
+        let _ = session.on_data_segment(SegmentType::GreenData, 1, 100, &[0xBB; 100], None);
 
         // Green-EOB completes the session
-        let actions = session.on_data_segment(SegmentType::GreenEob, 1, 0, &vec![0xAA; 100], None);
+        let actions = session.on_data_segment(SegmentType::GreenEob, 1, 0, &[0xAA; 100], None);
 
         assert_eq!(session.state(), ImportState::Complete);
         assert!(has_deliver_block(&actions));
@@ -2407,7 +2403,7 @@ mod import_session_tests {
             SegmentType::RedEob,
             1,
             100,
-            &vec![0xBB; 100],
+            &[0xBB; 100],
             Some(CheckpointInfo {
                 serial: 1,
                 responding_report_serial: 0,
@@ -2415,7 +2411,7 @@ mod import_session_tests {
         );
 
         // Complete with plain RedData
-        let actions = session.on_data_segment(SegmentType::RedData, 1, 0, &vec![0xAA; 100], None);
+        let actions = session.on_data_segment(SegmentType::RedData, 1, 0, &[0xAA; 100], None);
 
         // Should have a StartTimer for the unsolicited RS
         assert!(count_start_timers(&actions) >= 1);
@@ -2430,7 +2426,7 @@ mod import_session_tests {
             SegmentType::RedEob,
             1,
             100,
-            &vec![0xBB; 100],
+            &[0xBB; 100],
             Some(CheckpointInfo {
                 serial: 1,
                 responding_report_serial: 0,
@@ -2438,7 +2434,7 @@ mod import_session_tests {
         );
 
         // Send partial data that doesn't complete the block (gap at 50..100)
-        let actions = session.on_data_segment(SegmentType::RedData, 1, 0, &vec![0xAA; 50], None);
+        let actions = session.on_data_segment(SegmentType::RedData, 1, 0, &[0xAA; 50], None);
 
         // Block is NOT complete — no unsolicited RS, no delivery
         assert_eq!(session.state(), ImportState::Receiving);

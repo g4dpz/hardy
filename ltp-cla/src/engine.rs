@@ -117,7 +117,7 @@ async fn handle_datagram(data: Bytes, spans: &HashMap<u64, Arc<Span>>, _sink: &A
                 *client_service_id,
                 *offset,
                 data,
-                checkpoint.clone(),
+                *checkpoint,
             )
             .await;
         }

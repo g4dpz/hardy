@@ -348,7 +348,7 @@ async fn test_ltp_send_file_100kb() {
     let (span1, capture_sink, recv1, recv2) = create_test_pair(1400).await;
 
     // Create a 100 KB "file" payload with a recognizable pattern.
-    let file_size = 100 * 1024;
+    let file_size: usize = 100 * 1024;
     let file_data: Vec<u8> = (0..file_size).map(|i| (i % 256) as u8).collect();
     let file_bundle = Bytes::from(file_data.clone());
 
@@ -358,7 +358,7 @@ async fn test_ltp_send_file_100kb() {
     );
     eprintln!(
         "--- Expected segments: ~{} ---",
-        (file_size + 4 + 1399) / 1400
+        (file_size + 4).div_ceil(1400_usize)
     );
 
     // Inject into aggregation buffer and flush.
@@ -391,14 +391,14 @@ async fn test_ltp_send_file_1mb() {
     let (span1, capture_sink, recv1, recv2) = create_test_pair(1400).await;
 
     // Create a 1 MB payload.
-    let file_size = 1024 * 1024;
+    let file_size: usize = 1024 * 1024;
     let file_data: Vec<u8> = (0..file_size).map(|i| ((i * 7 + 13) % 256) as u8).collect();
     let file_bundle = Bytes::from(file_data.clone());
 
     eprintln!("--- Sending {} byte (1 MB) payload over LTP ---", file_size);
     eprintln!(
         "--- Expected segments: ~{} ---",
-        (file_size + 4 + 1399) / 1400
+        (file_size + 4).div_ceil(1400_usize)
     );
 
     let block = {

@@ -526,7 +526,7 @@ async fn lunar_link_telemetry_downlink() {
     let link = LunarLink::new().await;
 
     // Create a 10 KB "telemetry" payload with a recognizable pattern.
-    let telemetry_size = 10 * 1024;
+    let telemetry_size: usize = 10 * 1024;
     let telemetry: Vec<u8> = (0..telemetry_size)
         .map(|i| ((i * 7 + 0xAB) % 256) as u8)
         .collect();
@@ -534,7 +534,7 @@ async fn lunar_link_telemetry_downlink() {
 
     // Calculate expected segments: payload + 4-byte length prefix, divided by segment size.
     let framed_size = telemetry_size + 4;
-    let expected_segments = (framed_size + MAX_SEGMENT_SIZE - 1) / MAX_SEGMENT_SIZE;
+    let expected_segments = framed_size.div_ceil(MAX_SEGMENT_SIZE);
 
     let t0 = Instant::now();
     eprintln!(
@@ -645,7 +645,7 @@ async fn lunar_link_bidirectional() {
     let command_bytes = Bytes::from(command.clone());
 
     // Telemetry: 10 KB satellite → ground.
-    let telemetry_size = 10 * 1024;
+    let telemetry_size: usize = 10 * 1024;
     let telemetry: Vec<u8> = (0..telemetry_size)
         .map(|i| ((i * 13 + 0x42) % 256) as u8)
         .collect();

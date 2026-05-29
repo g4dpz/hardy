@@ -948,11 +948,9 @@ impl Span {
                     metrics::counter!("ltp.import.cancelled_local").increment(1);
                 }
                 self.cleanup_import_session(&mut sessions, session_number);
-            } else {
-                if let Some(state) = sessions.get_mut(&session_number) {
-                    self.spawn_import_timers(state, timers, session_number);
-                    self.spawn_import_timers(state, deferred_report_timers, session_number);
-                }
+            } else if let Some(state) = sessions.get_mut(&session_number) {
+                self.spawn_import_timers(state, timers, session_number);
+                self.spawn_import_timers(state, deferred_report_timers, session_number);
             }
 
             // Collect all segments and blocks for I/O outside the lock.
@@ -1280,10 +1278,8 @@ impl Span {
                     metrics::counter!("ltp.import.cancelled_local").increment(1);
                 }
                 self.cleanup_import_session(&mut sessions, session_number);
-            } else {
-                if let Some(state) = sessions.get_mut(&session_number) {
-                    self.spawn_import_timers(state, timers, session_number);
-                }
+            } else if let Some(state) = sessions.get_mut(&session_number) {
+                self.spawn_import_timers(state, timers, session_number);
             }
 
             (segments, blocks)
@@ -2134,7 +2130,7 @@ mod tests {
         assert_eq!(retention, 310);
 
         // max_retransmissions=1, retransmit_cycle=1s → 2*1*1+10 = 12s
-        let retention = 2 * 1u64 * 1 + 10;
+        let retention = 2 + 10;
         assert_eq!(retention, 12);
 
         // max_retransmissions=10, retransmit_cycle=60s → 2*10*60+10 = 1210s

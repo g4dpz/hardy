@@ -118,7 +118,7 @@ impl ExportSession {
         let num_segments = if block_len == 0 {
             1 // Even an empty block produces one EOB segment
         } else {
-            (block_len + max_seg - 1) / max_seg
+            block_len.div_ceil(max_seg)
         };
 
         // Pre-size the actions vec: each segment produces a SendSegment, plus
@@ -126,8 +126,8 @@ impl ExportSession {
         let checkpoint_every_n = config.checkpoint_every_n as usize;
         let estimated_timers = if is_green {
             0
-        } else if checkpoint_every_n > 0 {
-            num_segments / checkpoint_every_n + 1
+        } else if let Some(result) = num_segments.checked_div(checkpoint_every_n) {
+            result + 1
         } else {
             1
         };
@@ -167,7 +167,7 @@ impl ExportSession {
                     }),
                 )
             } else if config.checkpoint_every_n > 0
-                && (segment_index + 1) % (config.checkpoint_every_n as usize) == 0
+                && (segment_index + 1).is_multiple_of(config.checkpoint_every_n as usize)
             {
                 // Intermediate checkpoint (type 1) — check max_checkpoints limit
                 if let Some(max) = config.max_checkpoints {
@@ -1673,10 +1673,12 @@ mod tests {
             if let ExportAction::SendSegment(wire) = action {
                 let mut reader = &wire[..];
                 let seg = segment::decode(&mut reader).unwrap();
-                if let Segment::Data { checkpoint, .. } = seg {
-                    if let Some(ckpt) = checkpoint {
-                        checkpoint_serials.push(ckpt.serial);
-                    }
+                if let Segment::Data {
+                    checkpoint: Some(ckpt),
+                    ..
+                } = seg
+                {
+                    checkpoint_serials.push(ckpt.serial);
                 }
             }
         }
@@ -1905,8 +1907,8 @@ mod tests {
 
         // 5 segments: first 4 are RedData, last is RedEob
         assert_eq!(segment_types.len(), 5);
-        for i in 0..4 {
-            assert_eq!(segment_types[i], SegmentType::RedData);
+        for seg_type in segment_types.iter().take(4) {
+            assert_eq!(*seg_type, SegmentType::RedData);
         }
         assert_eq!(segment_types[4], SegmentType::RedEob);
         // Only 1 timer (for the EOB checkpoint)

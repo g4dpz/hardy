@@ -31,7 +31,7 @@ pub fn encoded_len(value: u64) -> usize {
     // Number of bits needed to represent the value
     let bits = 64 - value.leading_zeros() as usize;
     // Each SDNV byte carries 7 value bits
-    (bits + 6) / 7
+    bits.div_ceil(7)
 }
 
 /// Encodes a u64 value as an SDNV into the provided buffer.

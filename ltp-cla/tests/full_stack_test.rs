@@ -439,7 +439,7 @@ async fn full_stack_large_bpv7_bundle_multi_segment() {
     eprintln!(
         "--- Sending large BPv7 bundle ({} bytes, ~{} LTP segments) ---",
         bundle_bytes.len(),
-        (bundle_bytes.len() + 1399) / 1400
+        bundle_bytes.len().div_ceil(1400_usize)
     );
 
     let block = {
