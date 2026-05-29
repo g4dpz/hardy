@@ -1,3 +1,6 @@
+// Copyright 2026 David Johnson, G4DPZ, AMSAT-UK
+// SPDX-License-Identifier: Apache-2.0
+
 //! End-to-end integration test for LTP CLA.
 //!
 //! Creates two Span instances on localhost UDP ports, sends a bundle

@@ -1,3 +1,6 @@
+// Copyright 2026 David Johnson, G4DPZ, AMSAT-UK
+// SPDX-License-Identifier: Apache-2.0
+
 //! Property-based tests for span module (Properties 13, 14, 16, 18, 20, 21).
 //!
 //! **Property 13: Token Bucket Rate Invariant**

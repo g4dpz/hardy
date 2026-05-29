@@ -1,3 +1,6 @@
+// Copyright 2026 David Johnson, G4DPZ, AMSAT-UK
+// SPDX-License-Identifier: Apache-2.0
+
 //! CLA trait implementation for LTP.
 //!
 //! Implements [`hardy_bpa::cla::Cla`] to integrate LTP with the BPA.

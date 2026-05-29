@@ -1,3 +1,6 @@
+// Copyright 2026 David Johnson, G4DPZ, AMSAT-UK
+// SPDX-License-Identifier: Apache-2.0
+
 //! UDP receive loop and segment dispatch.
 //!
 //! Spawns a tokio task that reads UDP datagrams, decodes LTP segments,

@@ -1,3 +1,6 @@
+// Copyright 2026 David Johnson, G4DPZ, AMSAT-UK
+// SPDX-License-Identifier: Apache-2.0
+
 //! Property-based tests for the LTP SDNV codec.
 //!
 //! These tests validate correctness properties of the SDNV encode/decode

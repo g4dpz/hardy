@@ -1,3 +1,6 @@
+// Copyright 2026 David Johnson, G4DPZ, AMSAT-UK
+// SPDX-License-Identifier: Apache-2.0
+
 //! Export (sender) session state machine.
 //!
 //! Implements the sender-side LTP session that segments a block into data

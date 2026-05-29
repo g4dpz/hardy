@@ -1,3 +1,6 @@
+// Copyright 2026 David Johnson, G4DPZ, AMSAT-UK
+// SPDX-License-Identifier: Apache-2.0
+
 //! Property-based tests for bundle aggregation round-trip (Property 12).
 //!
 //! **Validates: Requirements 9.1, 9.4, 9.5**

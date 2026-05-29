@@ -1,3 +1,6 @@
+// Copyright 2026 David Johnson, G4DPZ, AMSAT-UK
+// SPDX-License-Identifier: Apache-2.0
+
 //! Block unpacking logic for extracting individual bundles from an LTP block.
 //!
 //! An LTP block aggregates multiple bundles using a simple length-prefixed format:

@@ -1,3 +1,6 @@
+// Copyright 2026 David Johnson, G4DPZ, AMSAT-UK
+// SPDX-License-Identifier: Apache-2.0
+
 //! Full Hardy BPA-to-BPA LunarLink test.
 //!
 //! Creates two real Hardy BPA instances (Ground Station and Spacecraft),

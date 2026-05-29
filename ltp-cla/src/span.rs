@@ -1,3 +1,6 @@
+// Copyright 2026 David Johnson, G4DPZ, AMSAT-UK
+// SPDX-License-Identifier: Apache-2.0
+
 //! Per-span state management.
 //!
 //! Manages export/import sessions, aggregation buffer, and rate control

@@ -1,3 +1,6 @@
+// Copyright 2026 David Johnson, G4DPZ, AMSAT-UK
+// SPDX-License-Identifier: Apache-2.0
+
 //! Property-based tests for the LTP export session state machine.
 //!
 //! These tests validate correctness properties of the export session

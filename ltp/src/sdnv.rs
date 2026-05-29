@@ -1,3 +1,6 @@
+// Copyright 2026 David Johnson, G4DPZ, AMSAT-UK
+// SPDX-License-Identifier: Apache-2.0
+
 //! SDNV (Self-Delimiting Numeric Value) encoding and decoding.
 //!
 //! Implements the variable-length integer encoding defined in RFC 5050 §4.1,

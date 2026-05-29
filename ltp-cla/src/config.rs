@@ -1,3 +1,6 @@
+// Copyright 2026 David Johnson, G4DPZ, AMSAT-UK
+// SPDX-License-Identifier: Apache-2.0
+
 //! Configuration types for the LTP CLA.
 //!
 //! Provides [`Config`] (top-level CLA configuration) and [`SpanConfig`]

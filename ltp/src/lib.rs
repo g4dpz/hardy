@@ -1,3 +1,6 @@
+// Copyright 2026 David Johnson, G4DPZ, AMSAT-UK
+// SPDX-License-Identifier: Apache-2.0
+
 //! LTP protocol engine library for the Hardy DTN implementation.
 //!
 //! This crate implements the Licklider Transmission Protocol (RFC 5326)

@@ -1,3 +1,6 @@
+// Copyright 2026 David Johnson, G4DPZ, AMSAT-UK
+// SPDX-License-Identifier: Apache-2.0
+
 use bytes::Bytes;
 use hardy_bpa::async_trait;
 use hardy_bpa::cla::{ClaAddress, Sink};

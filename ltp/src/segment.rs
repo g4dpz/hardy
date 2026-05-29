@@ -1,3 +1,6 @@
+// Copyright 2026 David Johnson, G4DPZ, AMSAT-UK
+// SPDX-License-Identifier: Apache-2.0
+
 //! LTP segment wire format encoding and decoding.
 //!
 //! Implements the segment types and wire format defined in RFC 5326,

@@ -1,3 +1,6 @@
+// Copyright 2026 David Johnson, G4DPZ, AMSAT-UK
+// SPDX-License-Identifier: Apache-2.0
+
 //! LTP session state machines.
 //!
 //! Contains the export (sender) and import (receiver) session state machines,

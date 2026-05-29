@@ -1,3 +1,6 @@
+// Copyright 2026 David Johnson, G4DPZ, AMSAT-UK
+// SPDX-License-Identifier: Apache-2.0
+
 //! Full-stack integration test: BPv7 Bundle ↔ LTP ↔ BPv7 Bundle
 //!
 //! Demonstrates that the LTP stack correctly transports real BPv7-encoded

@@ -1,3 +1,6 @@
+// Copyright 2026 David Johnson, G4DPZ, AMSAT-UK
+// SPDX-License-Identifier: Apache-2.0
+
 //! Import (receiver) session state machine.
 //!
 //! Implements the receiver-side LTP session that tracks incoming data segments,

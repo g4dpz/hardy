@@ -1,3 +1,6 @@
+// Copyright 2026 David Johnson, G4DPZ, AMSAT-UK
+// SPDX-License-Identifier: Apache-2.0
+
 //! LunarLink Mission Simulation Test
 //!
 //! Simulates a lunar communications mission between a Ground Station (Earth)
