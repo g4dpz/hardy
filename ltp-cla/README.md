@@ -95,6 +95,9 @@ Test suites:
 ## Documentation
 
 - [Design](docs/design.md)
+- [Test Architecture](docs/test_architecture.md)
+- [LunarLink Architecture](docs/lunar_link_architecture.md)
+- [LunarLink Full-BPA Architecture](docs/lunar_link_full_bpa_architecture.md)
 
 ## Licence
 
