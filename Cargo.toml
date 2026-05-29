@@ -21,6 +21,8 @@ members = [
     "file-cla",
     "ipn-legacy-filter",
     "localdisk-storage",
+    "ltp",
+    "ltp-cla",
     "otel",
     "s3-storage",
     "proto",

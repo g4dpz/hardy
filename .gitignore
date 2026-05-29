@@ -1,5 +1,7 @@
 target/
+.DS_Store
 /.claude/
+/.kiro/
 /.vscode
 /test_data
 

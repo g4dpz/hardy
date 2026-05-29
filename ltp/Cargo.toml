@@ -1,0 +1,23 @@
+[package]
+name = "hardy-ltp"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords = ["dtn", "ltp", "rfc5326", "convergence-layer"]
+categories = ["network-programming", "encoding"]
+description = "LTP protocol engine library for the Hardy DTN implementation"
+
+[lib]
+path = "src/lib.rs"
+crate-type = ["rlib"]
+
+[dependencies]
+bytes = "1"
+thiserror = { version = "2", default-features = false }
+tokio = { version = "1", features = ["time"] }
+tracing = { version = "0.1", default-features = false }
+
+[dev-dependencies]
+proptest = "1"

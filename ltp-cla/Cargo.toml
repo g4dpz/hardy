@@ -1,0 +1,41 @@
+[package]
+name = "hardy-ltp-cla"
+description = "An LTP (RFC 5326) DTN convergence layer adapter"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords = ["dtn", "bpv7", "ltp", "rfc5326", "convergence-layer"]
+categories = ["network-programming"]
+
+[lib]
+path = "src/lib.rs"
+crate-type = ["rlib"]
+
+[features]
+default = []
+serde = ["dep:serde"]
+
+[dependencies]
+hardy-async = { version = "0.1", path = "../async" }
+hardy-bpa = { version = "0.1", path = "../bpa" }
+hardy-bpv7 = { version = "0.5", path = "../bpv7" }
+hardy-ltp = { version = "0.1", path = "../ltp" }
+tokio = { version = "1", features = ["macros", "net", "time"] }
+bytes = "1"
+thiserror = "2"
+trace-err = "1"
+tracing = { version = "0.1", default-features = false }
+metrics = "0.24"
+serde = { version = "1", features = ["derive"], optional = true }
+
+[dev-dependencies]
+proptest = "1"
+tokio = { version = "1", features = ["macros", "net", "time", "rt-multi-thread"] }
+hardy-bpa = { version = "0.1", path = "../bpa" }
+hardy-bpv7 = { version = "0.5", path = "../bpv7" }
+hardy-ltp = { version = "0.1", path = "../ltp" }
+bytes = "1"
+time = "0.3"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

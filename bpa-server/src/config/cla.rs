@@ -3,6 +3,8 @@ use std::sync::Arc;
 use hardy_bpa::cla::Cla;
 #[cfg(feature = "file-cla")]
 use hardy_file_cla::Cla as FileCla;
+#[cfg(feature = "ltp")]
+use hardy_ltp_cla::cla::LtpCla;
 #[cfg(feature = "tcpclv4")]
 use hardy_tcpclv4::Cla as TcpClv4Cla;
 use serde::{Deserialize, Serialize};
@@ -27,6 +29,10 @@ pub enum ClaType {
     #[cfg(feature = "file-cla")]
     #[serde(rename = "file-cla")]
     File(hardy_file_cla::Config),
+
+    #[cfg(feature = "ltp")]
+    #[serde(rename = "ltp")]
+    Ltp(hardy_ltp_cla::config::Config),
 
     #[serde(untagged)]
     Other {
@@ -54,6 +60,11 @@ impl Config {
                     Arc::new(FileCla::new(config).map_err(|e| {
                         anyhow::anyhow!("Failed to create CLA '{}': {e}", self.name)
                     })?);
+                Ok(Some(cla))
+            }
+            #[cfg(feature = "ltp")]
+            ClaType::Ltp(config) => {
+                let cla = Arc::new(LtpCla::new(config.clone()));
                 Ok(Some(cla))
             }
             ClaType::Other {
