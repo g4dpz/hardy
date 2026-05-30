@@ -1,0 +1,157 @@
+#!/bin/bash
+# ION LTP interop test wrapper script
+#
+# This script starts ION with LTP/UDP convergence layer for interoperability
+# testing with Hardy.
+#
+# Environment variables:
+#   ION_NODE_NUM      - Node number for IPN EID and LTP engine ID (default: 2)
+#   LTP_PORT          - Local UDP port for udplsi (default: 1113)
+#   REMOTE_HOST       - Hostname/IP of remote DTN node (optional, skip remote config if empty)
+#   REMOTE_LTP_PORT   - Remote LTP UDP port (default: 1114)
+#   REMOTE_NODE       - Remote node number / engine ID (default: 1)
+#   MAX_SEGMENT_SIZE  - LTP maximum segment size in bytes (default: 1400)
+#   AGG_SIZE_LIMIT    - LTP aggregation size limit in bytes (default: 65536)
+#   AGG_TIME_LIMIT    - LTP aggregation time limit in seconds (default: 1)
+
+set -e
+
+ION_NODE_NUM=${ION_NODE_NUM:-2}
+LTP_PORT=${LTP_PORT:-1113}
+REMOTE_HOST=${REMOTE_HOST:-}
+REMOTE_LTP_PORT=${REMOTE_LTP_PORT:-1114}
+REMOTE_NODE=${REMOTE_NODE:-1}
+MAX_SEGMENT_SIZE=${MAX_SEGMENT_SIZE:-1400}
+AGG_SIZE_LIMIT=${AGG_SIZE_LIMIT:-65536}
+AGG_TIME_LIMIT=${AGG_TIME_LIMIT:-1}
+
+echo "ION LTP Interop Testing"
+echo "  Node:        ipn:$ION_NODE_NUM.0"
+echo "  Engine ID:   $ION_NODE_NUM"
+echo "  LTP port:    $LTP_PORT (UDP)"
+echo "  Segment size: $MAX_SEGMENT_SIZE bytes"
+if [ -n "$REMOTE_HOST" ]; then
+    echo "  Remote:      $REMOTE_HOST:$REMOTE_LTP_PORT (ipn:$REMOTE_NODE.0, engine $REMOTE_NODE)"
+fi
+echo ""
+
+# Report SysV shared memory limits (ION uses shmget)
+echo "SysV IPC limits:"
+echo "  shmmax: $(cat /proc/sys/kernel/shmmax 2>/dev/null || echo 'N/A')"
+echo "  shmall: $(cat /proc/sys/kernel/shmall 2>/dev/null || echo 'N/A')"
+echo "  shmmni: $(cat /proc/sys/kernel/shmmni 2>/dev/null || echo 'N/A')"
+echo ""
+
+# Create ION configuration files
+# wmKey and sdrName MUST match ION's compiled-in defaults (65281 and "ion").
+cat > /ion/ion.ionconfig << EOF
+wmKey 65281
+sdrName ion
+wmSize 5000000
+configFlags 1
+heapWords 5000000
+EOF
+
+cat > /ion/ion.ionrc << EOF
+1 ${ION_NODE_NUM} ion.ionconfig
+s
+m horizon +0
+a range +0 +86400 ${ION_NODE_NUM} ${ION_NODE_NUM} 0
+EOF
+
+# Add contact/range to remote node if configured
+if [ -n "$REMOTE_HOST" ]; then
+    cat >> /ion/ion.ionrc << EOF
+a range +0 +86400 ${ION_NODE_NUM} ${REMOTE_NODE} 1
+a range +0 +86400 ${REMOTE_NODE} ${ION_NODE_NUM} 1
+a contact +0 +86400 ${ION_NODE_NUM} ${REMOTE_NODE} 100000
+a contact +0 +86400 ${REMOTE_NODE} ${ION_NODE_NUM} 100000
+EOF
+fi
+
+cat > /ion/ion.ionsecrc << EOF
+1
+EOF
+
+# Build ltprc with LTP engine configuration
+cat > /ion/ion.ltprc << EOF
+1 100 1000000
+EOF
+
+# Add span to remote node if configured
+if [ -n "$REMOTE_HOST" ]; then
+    cat >> /ion/ion.ltprc << EOF
+a span ${REMOTE_NODE} 100 1000000 ${MAX_SEGMENT_SIZE} ${AGG_SIZE_LIMIT} ${AGG_TIME_LIMIT} 'udplso ${REMOTE_HOST}:${REMOTE_LTP_PORT}' 'udplsi 0.0.0.0:${LTP_PORT}'
+EOF
+fi
+
+cat >> /ion/ion.ltprc << EOF
+s 'udplsi 0.0.0.0:${LTP_PORT}'
+EOF
+
+# Build bprc with LTP protocol
+cat > /ion/ion.bprc << EOF
+1
+a scheme ipn 'ipnfw' 'ipnadminep'
+a endpoint ipn:${ION_NODE_NUM}.0 x
+a endpoint ipn:${ION_NODE_NUM}.1 x
+a endpoint ipn:${ION_NODE_NUM}.7 x
+a protocol ltp 1400 100 -1
+a induct ltp ${ION_NODE_NUM} ltpcli
+EOF
+
+# Add outduct to remote node if configured
+if [ -n "$REMOTE_HOST" ]; then
+    cat >> /ion/ion.bprc << EOF
+a outduct ltp ${REMOTE_NODE} ltpclo
+EOF
+fi
+
+cat >> /ion/ion.bprc << EOF
+r 'ipnadmin ion.ipnrc'
+s
+EOF
+
+# Build ipnrc with route to remote node
+cat > /ion/ion.ipnrc << EOF
+EOF
+
+if [ -n "$REMOTE_HOST" ]; then
+    cat >> /ion/ion.ipnrc << EOF
+a plan ${REMOTE_NODE} ltp/${REMOTE_NODE}
+EOF
+fi
+
+echo "Starting ION with LTP..."
+
+# Clean up any stale ION shared memory/semaphores from previous runs.
+# With --ipc=host, these persist across container restarts.
+echo "Cleaning stale ION IPC state..."
+killm 2>/dev/null || true
+sleep 1
+
+# Initialize and start ION
+cd /ion
+ionadmin ion.ionrc
+ionsecadmin ion.ionsecrc
+ltpadmin ion.ltprc
+bpadmin ion.bprc
+
+echo "ION started successfully"
+echo "  Local EID:   ipn:${ION_NODE_NUM}.0"
+echo "  Engine ID:   ${ION_NODE_NUM}"
+echo "  LTP port:    ${LTP_PORT} (UDP)"
+
+# Start echo service on endpoint ipn:<node_num>.7
+bpecho ipn:${ION_NODE_NUM}.7 &
+echo "  Echo service: ipn:${ION_NODE_NUM}.7"
+
+# Keep the container running - ION runs as background daemons
+# Wait for any signal to shut down
+trap 'echo "Shutting down ION..."; bpadmin . 2>/dev/null; ltpadmin . 2>/dev/null; ionadmin . 2>/dev/null; killm 2>/dev/null; exit 0' SIGTERM SIGINT
+
+# Block forever (ION daemons run in background)
+while true; do
+    sleep 3600 &
+    wait $!
+done
