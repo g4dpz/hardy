@@ -19,7 +19,7 @@ address = "[::]:4560"
 [[clas]]
 name = "ltp0"
 type = "ltp"
-bind = "[::]:1113"
+bind = "0.0.0.0:1113"
 engine-id = 1
 client-service-id = 1
 
