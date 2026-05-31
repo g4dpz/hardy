@@ -798,7 +798,7 @@ fn parse_primary_block(
     canonical: bool,
     tags: &[u64],
 ) -> Result<(Bundle, bool), (Option<Bundle>, Error)> {
-    let mut canonical = canonical && !block_array.is_definite() && tags.is_empty();
+    let mut canonical = canonical && tags.is_empty();
 
     let block_start = block_array.offset();
     let primary_block = block_array
@@ -1119,7 +1119,7 @@ impl Id {
         tags: &[u64],
     ) -> Result<Self, Error> {
         // Check for shortest/correct form
-        canonical = canonical && !block_array.is_definite() && tags.is_empty();
+        canonical = canonical && tags.is_empty();
 
         // Parse Primary block
         let block_start = block_array.offset();
@@ -1355,19 +1355,18 @@ mod test {
     fn non_canonical_rewriting() {
         let data = build_minimal_bundle();
 
-        // The Builder produces bundles with an indefinite-length outer array (0x9F...0xFF).
-        // Replacing the first byte with a definite-length array header makes it non-canonical.
-        assert_eq!(
-            data[0], 0x9F,
-            "Bundle should start with indefinite array marker"
+        // The Builder now produces bundles with a definite-length outer array.
+        assert!(
+            data[0] >= 0x80 && data[0] <= 0x97,
+            "Bundle should start with definite-length array header, got 0x{:02X}",
+            data[0]
         );
 
-        // Count the blocks to build a definite-length header
-        // A minimal bundle has primary block + payload block = encoded in the indefinite array
-        // We need to replace 0x9F with 0x80+count (for small counts) — but we don't know the
-        // exact count without parsing. Instead, use a different non-canonical encoding:
-        // wrap the entire bundle data in a CBOR tag (tag 55799 = 0xD9D9F7 is the CBOR
-        // self-describing tag). The parser detects tags on the outer array as non-canonical.
+        // Test that an indefinite-length encoding (0x9F...0xFF) is treated as non-canonical
+        // and gets rewritten to definite-length.
+        // Create a non-canonical version by wrapping in a CBOR tag (tag 55799 = 0xD9D9F7
+        // is the CBOR self-describing tag). The parser detects tags on the outer array
+        // as non-canonical.
         let mut tagged = Vec::with_capacity(data.len() + 3);
         tagged.extend_from_slice(&[0xD9, 0xD9, 0xF7]); // Tag 55799
         tagged.extend_from_slice(&data);
@@ -1390,9 +1389,10 @@ mod test {
                 assert!(non_canonical, "Should flag as non-canonical rewrite");
                 // Rewritten data should not have the tag
                 let flattened = editor::Chunk::flatten(new_data, &tagged);
-                assert_eq!(
-                    flattened[0], 0x9F,
-                    "Rewritten bundle should start with indefinite array"
+                assert!(
+                    flattened[0] >= 0x80 && flattened[0] <= 0x97,
+                    "Rewritten bundle should start with definite-length array header, got 0x{:02X}",
+                    flattened[0]
                 );
             }
             RewrittenBundle::Valid { .. } => {
@@ -1426,17 +1426,36 @@ mod test {
             a.emit(&hardy_cbor::encode::Bytes(&[0xDE, 0xAD, 0xBE, 0xEF]));
         });
 
-        // The bundle is 9F [primary_array] [payload_array] FF
+        // The bundle is [header] [primary_array] [payload_array]
         // We insert the unknown block between the primary block and the payload.
-        // Skip 0x9F (1 byte), then walk past the primary block to find the insertion point.
-        assert_eq!(data[0], 0x9F, "Bundle should start with indefinite array");
+        // Skip the array header (1 byte for definite-length with ≤23 items),
+        // then walk past the primary block to find the insertion point.
+        let header_len = if data[0] >= 0x80 && data[0] <= 0x97 {
+            1
+        } else if data[0] == 0x98 {
+            2
+        } else if data[0] == 0x9F {
+            1 // indefinite-length (legacy)
+        } else {
+            panic!("Unexpected array header: 0x{:02X}", data[0]);
+        };
 
         let (_, primary_len) =
-            hardy_cbor::decode::skip_value(&data[1..], 16).expect("Should skip primary block");
+            hardy_cbor::decode::skip_value(&data[header_len..], 16)
+                .expect("Should skip primary block");
 
-        let insert_pos = 1 + primary_len;
-        let mut modified = Vec::with_capacity(data.len() + unknown_block.len());
-        modified.extend_from_slice(&data[..insert_pos]);
+        // We need to update the array count since we're adding a block
+        let insert_pos = header_len + primary_len;
+        let mut modified = Vec::with_capacity(data.len() + unknown_block.len() + 1);
+        // Write updated header with count+1
+        let original_count = if data[0] >= 0x80 && data[0] <= 0x97 {
+            (data[0] - 0x80) as usize
+        } else {
+            2 // assume 2 for indefinite
+        };
+        let new_header = super::super::editor::cbor_array_header(original_count + 1);
+        modified.extend_from_slice(&new_header);
+        modified.extend_from_slice(&data[header_len..insert_pos]);
         modified.extend_from_slice(&unknown_block);
         modified.extend_from_slice(&data[insert_pos..]);
 
@@ -1493,21 +1512,25 @@ mod test {
     #[test]
     fn ccsds_compliance() {
         // CCSDS 734.20-O-1 requires BPv7 per RFC 9171:
-        // - Indefinite-length outer array
+        // - Definite-length outer array (for interoperability with ION)
         // - Version 7 in primary block
         // - Valid CRC on primary block
         // - Payload block present
 
         let data = build_minimal_bundle();
 
-        // Indefinite-length array marker
-        assert_eq!(data[0], 0x9F, "Bundle must use indefinite-length array");
+        // Definite-length array header (0x80-0x97 for 0-23 items)
+        assert!(
+            data[0] >= 0x80 && data[0] <= 0x97,
+            "Bundle must use definite-length array, got 0x{:02X}",
+            data[0]
+        );
 
-        // Break code at end
-        assert_eq!(
+        // No break code at end (definite-length doesn't need one)
+        assert_ne!(
             data[data.len() - 1],
             0xFF,
-            "Bundle must end with break code"
+            "Definite-length bundle should not end with break code (unless last byte of payload happens to be 0xFF)"
         );
 
         // Parse and verify structural compliance

@@ -57,6 +57,23 @@ pub enum Chunk {
     New(Box<[u8]>),
 }
 
+/// Encode a CBOR definite-length array header for the given item count.
+/// Returns 1 byte for counts ≤23, 2 bytes for ≤255, 3 bytes for ≤65535.
+pub fn cbor_array_header(count: usize) -> SmallVec<[u8; 3]> {
+    let mut header = SmallVec::new();
+    if count <= 23 {
+        header.push(0x80 + count as u8);
+    } else if count <= 255 {
+        header.push(0x98);
+        header.push(count as u8);
+    } else {
+        header.push(0x99);
+        header.push((count >> 8) as u8);
+        header.push(count as u8);
+    }
+    header
+}
+
 impl Chunk {
     fn len(&self) -> usize {
         match self {
@@ -66,11 +83,13 @@ impl Chunk {
     }
 
     /// Flatten chunks into a contiguous byte buffer, wrapping in a CBOR
-    /// indefinite-length array (0x9F prefix, 0xFF suffix).
+    /// definite-length array.
     pub fn flatten(chunks: Vec<Self>, source: &[u8]) -> Box<[u8]> {
-        let total_len = 2 + chunks.iter().map(|c| c.len()).sum::<usize>();
+        let block_count = chunks.len();
+        let header = cbor_array_header(block_count);
+        let total_len = header.len() + chunks.iter().map(|c| c.len()).sum::<usize>();
         let mut result = Vec::with_capacity(total_len);
-        result.push(0x9F);
+        result.extend_from_slice(&header);
         for c in chunks {
             match c {
                 Chunk::Unchanged(extent) => {
@@ -82,7 +101,6 @@ impl Chunk {
                 }
             }
         }
-        result.push(0xFF);
         debug_assert_eq!(result.len(), total_len);
         result.into()
     }
@@ -95,9 +113,13 @@ impl Chunk {
     /// The buffer is resized (truncated or extended) if the total output
     /// length differs from the source.
     pub fn flatten_inplace(chunks: Vec<Self>, source: &mut Vec<u8>) {
+        let block_count = chunks.len();
+        let header = cbor_array_header(block_count);
+        let header_len = header.len();
+
         // Single pass: compute total length and check if backward copy is needed
         let mut content_len: usize = 0;
-        let mut write_pos: usize = 1; // after 0x9F
+        let mut write_pos: usize = header_len;
         let mut needs_backward = false;
         for chunk in &chunks {
             let len = chunk.len();
@@ -110,19 +132,20 @@ impl Chunk {
             content_len += len;
             write_pos += len;
         }
-        let total_len = 1 + content_len + 1; // 0x9F prefix + content + 0xFF suffix
+        let total_len = header_len + content_len;
 
         // Ensure buffer is large enough
         if total_len > source.len() {
             source.resize(total_len, 0);
         }
 
-        source[0] = 0x9F;
+        // Write header
+        source[..header_len].copy_from_slice(&header);
 
         if needs_backward {
             // Backward pass: process chunks from back to front to avoid
             // overwriting source data that hasn't been read yet
-            let mut write_end = 1 + content_len;
+            let mut write_end = header_len + content_len;
             for chunk in chunks.iter().rev() {
                 match chunk {
                     Chunk::Unchanged(range) => {
@@ -137,10 +160,10 @@ impl Chunk {
                     }
                 }
             }
-            debug_assert_eq!(write_end, 1);
+            debug_assert_eq!(write_end, header_len);
         } else {
             // Forward pass: safe when write positions are at or before source positions
-            let mut write_pos: usize = 1;
+            let mut write_pos: usize = header_len;
             for chunk in chunks {
                 match chunk {
                     Chunk::Unchanged(range) => {
@@ -156,11 +179,10 @@ impl Chunk {
                     }
                 }
             }
-            debug_assert_eq!(write_pos, 1 + content_len);
+            debug_assert_eq!(write_pos, header_len + content_len);
         }
 
-        // Write 0xFF suffix and truncate
-        source[total_len - 1] = 0xFF;
+        // Truncate to final size (no 0xFF suffix needed for definite-length)
         source.truncate(total_len);
     }
 
@@ -171,7 +193,7 @@ impl Chunk {
     /// - Adjacent Unchanged ranges merged
     ///
     /// If `bundle` is provided, block extents are updated to reflect positions
-    /// in the flattened output (offset 1 for the 0x9F array header).
+    /// in the flattened output (accounting for the CBOR array header).
     fn assemble(
         primary: (u64, Chunk),
         extensions: Vec<(u64, Chunk)>,
@@ -193,7 +215,7 @@ impl Chunk {
         unchanged.sort_by_key(|(_, range)| range.start);
 
         // Sort new chunks by size descending for best-fit gap filling
-        new_chunks.sort_by_key(|(_, b)| std::cmp::Reverse(b.len()));
+        new_chunks.sort_by_key(|(_, b)| core::cmp::Reverse(b.len()));
 
         // Build ordered extension list: try to fill gaps with matching-size New chunks
         let mut ordered: Vec<(u64, Chunk)> = Vec::with_capacity(unchanged.len() + new_chunks.len());
@@ -231,7 +253,7 @@ impl Chunk {
 
         // Update block extents if bundle provided
         if let Some(bundle) = bundle {
-            let mut offset: usize = 1; // 0x9F prefix
+            let mut offset: usize = cbor_array_header(assembled.len()).len();
             for (block_number, chunk) in &assembled {
                 let len = chunk.len();
                 if let Some(block) = bundle.blocks.get_mut(block_number) {
@@ -241,20 +263,10 @@ impl Chunk {
             }
         }
 
-        // Merge adjacent Unchanged ranges
-        let mut result: Vec<Chunk> = Vec::with_capacity(assembled.len());
-        for (_, chunk) in assembled {
-            match (&mut result.last_mut(), &chunk) {
-                (Some(Chunk::Unchanged(prev)), Chunk::Unchanged(next))
-                    if prev.end == next.start =>
-                {
-                    prev.end = next.end;
-                }
-                _ => result.push(chunk),
-            }
-        }
-
-        result
+        // Return assembled chunks (primary + extensions + payload)
+        // Note: we do NOT merge adjacent Unchanged ranges because the chunk count
+        // must equal the block count for the CBOR definite-length array header.
+        assembled.into_iter().map(|(_, chunk)| chunk).collect()
     }
 }
 
