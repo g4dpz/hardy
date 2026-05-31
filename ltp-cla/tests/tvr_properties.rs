@@ -145,7 +145,6 @@ proptest! {
 
 // Feature: tvr-ltp-integration, Property 1: Duplicate Link Events Are Idempotent
 
-use hardy_ltp_cla::config::BlockFraming;
 use hardy_ltp_cla::span::{AggregationBuffer, LinkState, TokenBucket};
 use hardy_ltp::session::export::{ExportAction, ExportConfig, ExportSession};
 use hardy_ltp::session::SessionId;
@@ -407,7 +406,7 @@ proptest! {
         bundle_data in prop::collection::vec(any::<u8>(), 0..=1000),
     ) {
         // Use a large aggr_size_limit to avoid flushing (isolate acceptance test)
-        let mut buffer = AggregationBuffer::new(usize::MAX, BlockFraming::LengthPrefixed);
+        let mut buffer = AggregationBuffer::new(usize::MAX);
 
         let bundle_len = bundle_data.len();
         let len_before = buffer.len();

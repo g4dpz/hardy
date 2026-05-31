@@ -92,13 +92,19 @@ impl Dispatcher {
         source_data: Bytes,
     ) -> Result<Bytes, hardy_bpv7::editor::Error> {
         // Previous Node Block
+        // RFC 9171 §4.2.3-4: admin records must not have blocks with report_on_failure
+        let prev_node_flags = if bundle.bundle.flags.is_admin_record {
+            hardy_bpv7::block::Flags::default()
+        } else {
+            hardy_bpv7::block::Flags {
+                report_on_failure: true,
+                ..Default::default()
+            }
+        };
         let mut editor = hardy_bpv7::editor::Editor::new(&bundle.bundle, &source_data)
             .insert_block(hardy_bpv7::block::Type::PreviousNode)
             .map_err(|(_, e)| e)?
-            .with_flags(hardy_bpv7::block::Flags {
-                report_on_failure: true,
-                ..Default::default()
-            })
+            .with_flags(prev_node_flags)
             .with_data(
                 hardy_cbor::encode::emit(
                     &self.node_ids.get_admin_endpoint(&bundle.bundle.destination),

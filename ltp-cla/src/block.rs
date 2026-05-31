@@ -3,20 +3,13 @@
 
 //! Block unpacking logic for extracting individual bundles from an LTP block.
 //!
-//! An LTP block can use two framing modes:
-//!
-//! - **Length-prefixed** (Hardy native): Multiple bundles aggregated with
-//!   `[4-byte big-endian length][bundle bytes][4-byte big-endian length][bundle bytes]...`
-//!
-//! - **None** (standard/ION interop): The entire block is a single raw bundle
-//!   with no framing. This is the standard BPv7-over-LTP format per RFC 5326.
+//! An LTP block aggregates multiple bundles using a simple length-prefixed format:
+//! `[4-byte big-endian length][bundle bytes][4-byte big-endian length][bundle bytes]...`
 //!
 //! This module provides [`unpack_block`] to extract individual bundles from a
 //! delivered block, handling malformed data gracefully.
 
 use bytes::Bytes;
-
-use crate::config::BlockFraming;
 
 /// Error encountered during block unpacking.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -38,15 +31,10 @@ pub struct UnpackResult {
 
 /// Unpack an LTP block into individual bundles.
 ///
-/// The behavior depends on the `framing` mode:
+/// The block format is a sequence of length-prefixed bundles:
+/// `[u32 BE length][bundle bytes][u32 BE length][bundle bytes]...`
 ///
-/// - [`BlockFraming::LengthPrefixed`]: The block is a sequence of length-prefixed
-///   bundles: `[u32 BE length][bundle bytes][u32 BE length][bundle bytes]...`
-///
-/// - [`BlockFraming::None`]: The entire block is treated as a single raw bundle
-///   (standard BPv7-over-LTP format used by ION and other implementations).
-///
-/// # Error handling (length-prefixed mode)
+/// # Error handling
 ///
 /// - If the block is empty (0 bytes), returns an empty bundle list with no error.
 /// - If a length prefix is zero, the entry is skipped (logged as warning), and
@@ -60,49 +48,27 @@ pub struct UnpackResult {
 /// ```
 /// use bytes::Bytes;
 /// use hardy_ltp_cla::block::unpack_block;
-/// use hardy_ltp_cla::config::BlockFraming;
 ///
-/// // Length-prefixed: a block with two bundles: [0,0,0,3, 1,2,3, 0,0,0,2, 4,5]
+/// // A block with two bundles: [0,0,0,3, 1,2,3, 0,0,0,2, 4,5]
 /// let block = Bytes::from(vec![0,0,0,3, 1,2,3, 0,0,0,2, 4,5]);
-/// let result = unpack_block(block, BlockFraming::LengthPrefixed);
+/// let result = unpack_block(block);
 /// assert_eq!(result.bundles.len(), 2);
 /// assert_eq!(&result.bundles[0][..], &[1,2,3]);
 /// assert_eq!(&result.bundles[1][..], &[4,5]);
 /// assert!(result.error.is_none());
-///
-/// // Raw (no framing): entire block is one bundle
-/// let block = Bytes::from(vec![1,2,3,4,5]);
-/// let result = unpack_block(block, BlockFraming::None);
-/// assert_eq!(result.bundles.len(), 1);
-/// assert_eq!(&result.bundles[0][..], &[1,2,3,4,5]);
-/// assert!(result.error.is_none());
 /// ```
-pub fn unpack_block(block: Bytes, framing: BlockFraming) -> UnpackResult {
-    // Empty block: return immediately with no bundles and no error.
-    if block.is_empty() {
-        return UnpackResult {
-            bundles: Vec::new(),
-            error: None,
-        };
-    }
-
-    match framing {
-        BlockFraming::None => {
-            // Raw mode: the entire block is a single bundle.
-            UnpackResult {
-                bundles: vec![block],
-                error: None,
-            }
-        }
-        BlockFraming::LengthPrefixed => unpack_block_length_prefixed(block),
-    }
-}
-
-/// Internal: unpack a length-prefixed block.
-fn unpack_block_length_prefixed(block: Bytes) -> UnpackResult {
+pub fn unpack_block(block: Bytes) -> UnpackResult {
     let mut bundles = Vec::new();
     let mut pos = 0;
     let len = block.len();
+
+    // Empty block: return immediately with no bundles and no error.
+    if len == 0 {
+        return UnpackResult {
+            bundles,
+            error: None,
+        };
+    }
 
     loop {
         // Check if we have enough bytes for a length prefix.
@@ -168,11 +134,10 @@ fn unpack_block_length_prefixed(block: Bytes) -> UnpackResult {
 mod tests {
     use super::*;
     use bytes::Bytes;
-    use crate::config::BlockFraming;
 
     #[test]
     fn empty_block_returns_no_bundles() {
-        let result = unpack_block(Bytes::new(), BlockFraming::LengthPrefixed);
+        let result = unpack_block(Bytes::new());
         assert!(result.bundles.is_empty());
         assert!(result.error.is_none());
     }
@@ -183,7 +148,7 @@ mod tests {
         let mut block = Vec::new();
         block.extend_from_slice(&5u32.to_be_bytes());
         block.extend_from_slice(&[10, 20, 30, 40, 50]);
-        let result = unpack_block(Bytes::from(block), BlockFraming::LengthPrefixed);
+        let result = unpack_block(Bytes::from(block));
         assert_eq!(result.bundles.len(), 1);
         assert_eq!(&result.bundles[0][..], &[10, 20, 30, 40, 50]);
         assert!(result.error.is_none());
@@ -202,7 +167,7 @@ mod tests {
         block.extend_from_slice(&1u32.to_be_bytes());
         block.extend_from_slice(&[6]);
 
-        let result = unpack_block(Bytes::from(block), BlockFraming::LengthPrefixed);
+        let result = unpack_block(Bytes::from(block));
         assert_eq!(result.bundles.len(), 3);
         assert_eq!(&result.bundles[0][..], &[1, 2, 3]);
         assert_eq!(&result.bundles[1][..], &[4, 5]);
@@ -220,7 +185,7 @@ mod tests {
         block.extend_from_slice(&100u32.to_be_bytes());
         block.extend_from_slice(&[0xCC, 0xDD, 0xEE]);
 
-        let result = unpack_block(Bytes::from(block), BlockFraming::LengthPrefixed);
+        let result = unpack_block(Bytes::from(block));
         // First bundle extracted successfully
         assert_eq!(result.bundles.len(), 1);
         assert_eq!(&result.bundles[0][..], &[0xAA, 0xBB]);
@@ -243,7 +208,7 @@ mod tests {
         block.extend_from_slice(&1u32.to_be_bytes());
         block.extend_from_slice(&[3]);
 
-        let result = unpack_block(Bytes::from(block), BlockFraming::LengthPrefixed);
+        let result = unpack_block(Bytes::from(block));
         assert_eq!(result.bundles.len(), 2);
         assert_eq!(&result.bundles[0][..], &[1, 2]);
         assert_eq!(&result.bundles[1][..], &[3]);
@@ -254,7 +219,7 @@ mod tests {
     fn truncated_length_prefix_at_end() {
         // Only 2 bytes — not enough for a 4-byte length prefix
         let block = Bytes::from(vec![0x00, 0x01]);
-        let result = unpack_block(block, BlockFraming::LengthPrefixed);
+        let result = unpack_block(block);
         assert!(result.bundles.is_empty());
         assert_eq!(
             result.error,
@@ -271,7 +236,7 @@ mod tests {
         // Trailing 3 bytes — not enough for a length prefix
         block.extend_from_slice(&[0x00, 0x00, 0x00]);
 
-        let result = unpack_block(Bytes::from(block), BlockFraming::LengthPrefixed);
+        let result = unpack_block(Bytes::from(block));
         assert_eq!(result.bundles.len(), 1);
         assert_eq!(&result.bundles[0][..], &[0xFF]);
         assert_eq!(
@@ -287,7 +252,7 @@ mod tests {
         block.extend_from_slice(&(data.len() as u32).to_be_bytes());
         block.extend_from_slice(&data);
 
-        let result = unpack_block(Bytes::from(block), BlockFraming::LengthPrefixed);
+        let result = unpack_block(Bytes::from(block));
         assert_eq!(result.bundles.len(), 1);
         assert_eq!(&result.bundles[0][..], &data[..]);
         assert!(result.error.is_none());
@@ -301,7 +266,7 @@ mod tests {
         block.extend_from_slice(&0u32.to_be_bytes());
         block.extend_from_slice(&0u32.to_be_bytes());
 
-        let result = unpack_block(Bytes::from(block), BlockFraming::LengthPrefixed);
+        let result = unpack_block(Bytes::from(block));
         assert!(result.bundles.is_empty());
         assert!(result.error.is_none());
     }
@@ -314,7 +279,7 @@ mod tests {
         block_data.extend_from_slice(&[10, 20, 30]);
         let block = Bytes::from(block_data);
 
-        let result = unpack_block(block.clone(), BlockFraming::LengthPrefixed);
+        let result = unpack_block(block.clone());
         assert_eq!(result.bundles.len(), 1);
         // The bundle should be a slice of the original Bytes
         assert_eq!(&result.bundles[0][..], &[10, 20, 30]);
@@ -324,7 +289,7 @@ mod tests {
     fn exactly_one_length_prefix_no_data() {
         // A length prefix that says 5 bytes but there are 0 bytes after it
         let block = Bytes::from(5u32.to_be_bytes().to_vec());
-        let result = unpack_block(block, BlockFraming::LengthPrefixed);
+        let result = unpack_block(block);
         assert!(result.bundles.is_empty());
         assert_eq!(
             result.error,
