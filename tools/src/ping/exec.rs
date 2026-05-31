@@ -27,8 +27,16 @@ async fn exec_async(args: &Command) -> anyhow::Result<ExitCode> {
         );
     }
 
-    let node_ids = [args.node_id()?].as_slice().try_into().unwrap();
-    let local_node_eid: hardy_bpv7::eid::Eid = args.node_id()?.into();
+    // Use a unique node ID for the embedded BPA (different from the main BPA)
+    // so that TCPCLv4 peer registration creates a useful route.
+    // The source EID's node (e.g., ipn:1.0) is the main BPA's node ID.
+    // We use a high node number (u32::MAX - 1) as the embedded BPA's identity
+    // to avoid conflicts.
+    let ping_node_id = hardy_bpv7::eid::NodeId::Ipn(hardy_bpv7::eid::IpnNodeId {
+        allocator_id: 0,
+        node_number: u32::MAX - 1,
+    });
+    let node_ids = [ping_node_id].as_slice().try_into().unwrap();
     let bpa = std::sync::Arc::new(
         hardy_bpa::bpa::Bpa::builder()
             .status_reports(false)
@@ -38,16 +46,16 @@ async fn exec_async(args: &Command) -> anyhow::Result<ExitCode> {
             .map_err(|e| anyhow::anyhow!("Failed to build BPA: {e}"))?,
     );
 
-    // Default route: forward all bundles via the local node EID.
-    // When the TCPCLv4 session establishes, the remote BPA registers as a peer
-    // for our node ID (ipn:N.0), creating route ipn:N.* → Forward to peer.
-    // The Via(ipn:N.0) resolves through that route, forwarding everything
-    // to the connected BPA which handles final routing.
+    // Default route: forward all bundles via the main BPA's node ID.
+    // When the TCPCLv4 session establishes, the main BPA announces its node ID
+    // (e.g., ipn:1.0) and the embedded BPA registers a peer for it with route
+    // ipn:1.* → Forward to peer. The Via(ipn:1.0) resolves through that route.
+    let main_bpa_eid: hardy_bpv7::eid::Eid = args.node_id()?.into();
     bpa.register_routing_agent(
         "ping".to_string(),
         std::sync::Arc::new(hardy_bpa::routes::StaticRoutingAgent::new(&[(
             "*:**".parse().unwrap(),
-            hardy_bpa::routes::Action::Via(local_node_eid.clone()),
+            hardy_bpa::routes::Action::Via(main_bpa_eid),
             100,
         )])),
     )
