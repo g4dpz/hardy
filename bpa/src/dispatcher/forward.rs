@@ -91,30 +91,9 @@ impl Dispatcher {
         bundle: &bundle::Bundle,
         source_data: Bytes,
     ) -> Result<Bytes, hardy_bpv7::editor::Error> {
-        // Previous Node Block
-        // Only add PreviousNode for bundles received from other nodes (not locally originated).
-        // RFC 9171 §4.4.3: identifies the node that forwarded the bundle to the current node.
-        let mut editor = if bundle.bundle.previous_node.is_some()
-            || bundle.metadata.read_only.ingress_cla.is_some()
-        {
-            hardy_bpv7::editor::Editor::new(&bundle.bundle, &source_data)
-                .insert_block(hardy_bpv7::block::Type::PreviousNode)
-                .map_err(|(_, e)| e)?
-                .with_flags(hardy_bpv7::block::Flags {
-                    report_on_failure: !bundle.bundle.flags.is_admin_record,
-                    ..Default::default()
-                })
-                .with_data(
-                    hardy_cbor::encode::emit(
-                        &self.node_ids.get_admin_endpoint(&bundle.bundle.destination),
-                    )
-                    .0
-                    .into(),
-                )
-                .rebuild()
-        } else {
-            hardy_bpv7::editor::Editor::new(&bundle.bundle, &source_data)
-        };
+        // Skip PreviousNode — causes ION interop issues (editor block insertion
+        // produces CBOR that ION cannot parse). TODO: investigate editor encoding.
+        let mut editor = hardy_bpv7::editor::Editor::new(&bundle.bundle, &source_data);
 
         // Increment Hop Count
         if let Some(hop_count) = &bundle.bundle.hop_count {
