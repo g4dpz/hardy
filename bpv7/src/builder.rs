@@ -138,9 +138,7 @@ impl<'a> Builder<'a> {
             ..Default::default()
         };
 
-        // Block count: primary + extensions + payload
-        let block_count = 1 + self.extensions.len() + 1;
-        let data = hardy_cbor::encode::try_emit_array(Some(block_count), |a| {
+        let data = hardy_cbor::encode::try_emit_array(None, |a| {
             // Emit primary block
             let primary_bytes = bundle::primary_block::PrimaryBlock::emit(&bundle)?;
             let extent = a.emit(&hardy_cbor::encode::Raw(&primary_bytes));
