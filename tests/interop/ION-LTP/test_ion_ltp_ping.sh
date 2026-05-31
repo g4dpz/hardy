@@ -114,9 +114,26 @@ cleanup() {
     fi
     docker rm -f "$ION_CONTAINER_NAME" 2>/dev/null || true
 
-    # Clean up ION shared memory (killm via Docker)
+    # Thorough ION IPC cleanup (shared memory persists with --ipc=host)
     if [ "$USE_DOCKER" = true ]; then
-        docker run --rm --ipc=host --entrypoint killm "$ION_IMAGE" 2>/dev/null || true
+        docker run --rm --ipc=host --entrypoint sh "$ION_IMAGE" -c '
+            ionexit 2>/dev/null || true
+            sleep 1
+            killm 2>/dev/null || true
+            sleep 1
+            # Remove POSIX named semaphores
+            for sem in /dev/shm/sem.ion:*; do
+                rm -f "$sem" 2>/dev/null || true
+            done
+            # Remove SysV shared memory
+            for id in $(ipcs -m 2>/dev/null | awk "NR>3 && \$1 ~ /^[0-9]/ {print \$2}"); do
+                ipcrm -m "$id" 2>/dev/null || true
+            done
+            # Remove SysV semaphores
+            for id in $(ipcs -s 2>/dev/null | awk "NR>3 && \$1 ~ /^[0-9]/ {print \$2}"); do
+                ipcrm -s "$id" 2>/dev/null || true
+            done
+        ' 2>/dev/null || true
     fi
 
     # Remove temp directory
@@ -244,7 +261,14 @@ log_info "Hardy BPA server started with PID $HARDY_PID"
 if [ "$USE_DOCKER" = true ]; then
     log_step "Starting ION container (ipn:$ION_NODE_NUM.0, engine-id $ION_NODE_NUM, LTP port $ION_LTP_PORT)..."
 
+    # Pre-cleanup: remove any stale ION container and IPC state from previous runs
     docker rm -f "$ION_CONTAINER_NAME" 2>/dev/null || true
+    docker run --rm --ipc=host --entrypoint sh "$ION_IMAGE" -c '
+        killm 2>/dev/null || true
+        for sem in /dev/shm/sem.ion:*; do rm -f "$sem" 2>/dev/null; done
+        for id in $(ipcs -m 2>/dev/null | awk "NR>3 && \$1 ~ /^[0-9]/ {print \$2}"); do ipcrm -m "$id" 2>/dev/null; done
+        for id in $(ipcs -s 2>/dev/null | awk "NR>3 && \$1 ~ /^[0-9]/ {print \$2}"); do ipcrm -s "$id" 2>/dev/null; done
+    ' 2>/dev/null || true
 
     ION_CONTAINER=$(docker run -d \
         --name "$ION_CONTAINER_NAME" \

@@ -126,9 +126,39 @@ echo "Starting ION with LTP..."
 
 # Clean up any stale ION shared memory/semaphores from previous runs.
 # With --ipc=host, these persist across container restarts.
+# We must be thorough here — stale IPC state causes ION to malfunction silently.
 echo "Cleaning stale ION IPC state..."
+
+# First try graceful shutdown of any running ION instance
+ionexit 2>/dev/null || true
+sleep 1
+
+# Kill any remaining ION processes
+for proc in rfxclock ltpclock ltpdeliv ltpmeter udplso udplsi bpclm bpclock bptransit ipnfw ipnadminep ltpcli ltpclo bpecho; do
+    killall -9 "$proc" 2>/dev/null || true
+done
+sleep 1
+
+# Run killm to clean ION's IPC resources
 killm 2>/dev/null || true
 sleep 1
+
+# Force-remove any remaining SysV shared memory segments owned by this user
+for id in $(ipcs -m 2>/dev/null | awk 'NR>3 && $1 ~ /^[0-9]/ {print $2}'); do
+    ipcrm -m "$id" 2>/dev/null || true
+done
+
+# Force-remove any remaining SysV semaphore sets
+for id in $(ipcs -s 2>/dev/null | awk 'NR>3 && $1 ~ /^[0-9]/ {print $2}'); do
+    ipcrm -s "$id" 2>/dev/null || true
+done
+
+# Remove POSIX named semaphores used by ION (ion:GLOBAL:*)
+for sem in /dev/shm/sem.ion:*; do
+    rm -f "$sem" 2>/dev/null || true
+done
+
+echo "IPC cleanup complete"
 
 # Initialize and start ION
 cd /ion
