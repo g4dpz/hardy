@@ -206,9 +206,8 @@ impl Cla for LtpCla {
         let rx_socket = socket.clone();
         let rx_cancel = cancel_token.clone();
         let rx_spans = Arc::new(spans.clone());
-        let rx_sink = sink.clone();
         tokio::spawn(crate::engine::run_receive_loop(
-            rx_socket, rx_spans, rx_sink, rx_cancel,
+            rx_socket, rx_spans, local_engine_id, rx_cancel,
         ));
 
         // Register as a LinkStateNotifier for each configured span's engine ID.
