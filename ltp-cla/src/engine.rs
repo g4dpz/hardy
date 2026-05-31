@@ -73,12 +73,32 @@ pub(crate) async fn run_receive_loop(
 /// Used for segments that reference our own engine ID (reports, cancel-from-receiver),
 /// which are responses to our export sessions. We identify the peer by matching
 /// the source IP address against configured span addresses.
+///
+/// Handles IPv4-mapped IPv6 addresses (e.g., `::ffff:127.0.0.1`) by canonicalizing
+/// to IPv4 before comparison.
 fn find_span_by_source<'a>(
     spans: &'a HashMap<u64, Arc<Span>>,
     src: std::net::SocketAddr,
 ) -> Option<&'a Arc<Span>> {
-    // Match by IP address (port may differ due to ephemeral ports in some configs).
-    spans.values().find(|span| span.config.address.ip() == src.ip())
+    let src_ip = canonicalize_ip(src.ip());
+    // Match by IP address (port may differ due to ephemeral source ports).
+    spans
+        .values()
+        .find(|span| canonicalize_ip(span.config.address.ip()) == src_ip)
+}
+
+/// Canonicalize an IP address by converting IPv4-mapped IPv6 addresses to plain IPv4.
+fn canonicalize_ip(ip: std::net::IpAddr) -> std::net::IpAddr {
+    match ip {
+        std::net::IpAddr::V6(v6) => {
+            if let Some(v4) = v6.to_ipv4_mapped() {
+                std::net::IpAddr::V4(v4)
+            } else {
+                std::net::IpAddr::V6(v6)
+            }
+        }
+        other => other,
+    }
 }
 
 /// Process a single received UDP datagram.
