@@ -218,6 +218,7 @@ aggr-size-limit = 65536
 aggr-time-limit-secs = 0
 max-import-sessions = 100
 max-export-sessions = 100
+framing = "none"
 EOF
 
 # =============================================================================
