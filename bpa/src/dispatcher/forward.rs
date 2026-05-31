@@ -91,8 +91,19 @@ impl Dispatcher {
         bundle: &bundle::Bundle,
         source_data: Bytes,
     ) -> Result<Bytes, hardy_bpv7::editor::Error> {
-        // Previous Node Block — temporarily disabled for ION interop debugging
-        let mut editor = hardy_bpv7::editor::Editor::new(&bundle.bundle, &source_data);
+        // Previous Node Block
+        let mut editor = hardy_bpv7::editor::Editor::new(&bundle.bundle, &source_data)
+            .insert_block(hardy_bpv7::block::Type::PreviousNode)
+            .map_err(|(_, e)| e)?
+            .with_flags(hardy_bpv7::block::Flags::default())
+            .with_data(
+                hardy_cbor::encode::emit(
+                    &self.node_ids.get_admin_endpoint(&bundle.bundle.destination),
+                )
+                .0
+                .into(),
+            )
+            .rebuild();
 
         // Increment Hop Count
         if let Some(hop_count) = &bundle.bundle.hop_count {
