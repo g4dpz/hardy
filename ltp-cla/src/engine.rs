@@ -11,7 +11,6 @@ use std::sync::Arc;
 
 use bytes::Bytes;
 use hardy_async::CancellationToken;
-use hardy_bpa::cla::Sink;
 use hardy_ltp::segment::{self, Segment};
 use tokio::net::UdpSocket;
 use tracing::{debug, trace, warn};
@@ -35,7 +34,7 @@ const MAX_DATAGRAM_SIZE: usize = 65536;
 pub(crate) async fn run_receive_loop(
     socket: Arc<UdpSocket>,
     spans: Arc<HashMap<u64, Arc<Span>>>,
-    sink: Arc<dyn Sink>,
+    local_engine_id: u64,
     cancel_token: CancellationToken,
 ) {
     let mut buf = vec![0u8; MAX_DATAGRAM_SIZE];
@@ -58,7 +57,7 @@ pub(crate) async fn run_receive_loop(
                         // can use zero-copy split_to() for data payloads instead
                         // of allocating via copy_to_bytes() on a &[u8] cursor.
                         let datagram = Bytes::copy_from_slice(&buf[..len]);
-                        handle_datagram(datagram, &spans, &sink).await;
+                        handle_datagram(datagram, &spans, local_engine_id, src).await;
                     }
                     Err(e) => {
                         warn!(error = %e, "LTP engine: UDP recv error, continuing");
@@ -69,13 +68,55 @@ pub(crate) async fn run_receive_loop(
     }
 }
 
+/// Find a span by the source address of the UDP datagram.
+///
+/// Used for segments that reference our own engine ID (reports, cancel-from-receiver),
+/// which are responses to our export sessions. We identify the peer by matching
+/// the source IP address against configured span addresses.
+///
+/// Handles IPv4-mapped IPv6 addresses (e.g., `::ffff:127.0.0.1`) by canonicalizing
+/// to IPv4 before comparison.
+fn find_span_by_source<'a>(
+    spans: &'a HashMap<u64, Arc<Span>>,
+    src: std::net::SocketAddr,
+) -> Option<&'a Arc<Span>> {
+    let src_ip = canonicalize_ip(src.ip());
+    // Match by IP address (port may differ due to ephemeral source ports).
+    spans
+        .values()
+        .find(|span| canonicalize_ip(span.config.address.ip()) == src_ip)
+}
+
+/// Canonicalize an IP address by converting IPv4-mapped IPv6 addresses to plain IPv4.
+fn canonicalize_ip(ip: std::net::IpAddr) -> std::net::IpAddr {
+    match ip {
+        std::net::IpAddr::V6(v6) => {
+            if let Some(v4) = v6.to_ipv4_mapped() {
+                std::net::IpAddr::V4(v4)
+            } else {
+                std::net::IpAddr::V6(v6)
+            }
+        }
+        other => other,
+    }
+}
+
 /// Process a single received UDP datagram.
 ///
 /// Decodes the segment from a `Bytes` buffer, enabling zero-copy extraction
 /// of data segment payloads (via `Buf::copy_to_bytes()` which becomes a
 /// reference-counted `split_to()` on `Bytes`). Routes the decoded segment
 /// to the appropriate session handler based on segment type and engine ID.
-async fn handle_datagram(data: Bytes, spans: &HashMap<u64, Arc<Span>>, _sink: &Arc<dyn Sink>) {
+///
+/// For segments referencing our own engine ID (reports, cancel-from-receiver,
+/// cancel-ack-to-sender), the span is looked up by the source address of the
+/// UDP datagram, since these are responses to our export sessions.
+async fn handle_datagram(
+    data: Bytes,
+    spans: &HashMap<u64, Arc<Span>>,
+    local_engine_id: u64,
+    src: std::net::SocketAddr,
+) {
     // Decode the segment from the Bytes buffer.
     // Because Bytes implements Buf with zero-copy copy_to_bytes() (via split_to),
     // data segment payloads are extracted without an additional allocation.
@@ -135,16 +176,34 @@ async fn handle_datagram(data: Bytes, spans: &HashMap<u64, Arc<Span>>, _sink: &A
             ..
         } => {
             // Report segments (type 8) are routed to export sessions.
+            // The session_id.engine_id is the originator (us), so we look up
+            // the span by source address when it matches our local engine ID.
             let engine_id = session_id.engine_id;
-            let span = match spans.get(&engine_id) {
-                Some(s) => s,
-                None => {
-                    warn!(
-                        engine_id,
-                        session_number = session_id.session_number,
-                        "LTP engine: report segment from unknown engine ID, dropping"
-                    );
-                    return;
+            let span = if engine_id == local_engine_id {
+                // This is a report for one of our export sessions — find span by source.
+                match find_span_by_source(spans, src) {
+                    Some(s) => s,
+                    None => {
+                        warn!(
+                            engine_id,
+                            session_number = session_id.session_number,
+                            source = %src,
+                            "LTP engine: report segment from unknown source, dropping"
+                        );
+                        return;
+                    }
+                }
+            } else {
+                match spans.get(&engine_id) {
+                    Some(s) => s,
+                    None => {
+                        warn!(
+                            engine_id,
+                            session_number = session_id.session_number,
+                            "LTP engine: report segment from unknown engine ID, dropping"
+                        );
+                        return;
+                    }
                 }
             };
             span.on_export_report(
@@ -187,15 +246,30 @@ async fn handle_datagram(data: Bytes, spans: &HashMap<u64, Arc<Span>>, _sink: &A
             ..
         } => {
             let engine_id = session_id.engine_id;
-            let span = match spans.get(&engine_id) {
-                Some(s) => s,
-                None => {
-                    warn!(
-                        engine_id,
-                        session_number = session_id.session_number,
-                        "LTP engine: cancel segment from unknown engine ID, dropping"
-                    );
-                    return;
+            let span = if engine_id == local_engine_id {
+                match find_span_by_source(spans, src) {
+                    Some(s) => s,
+                    None => {
+                        warn!(
+                            engine_id,
+                            session_number = session_id.session_number,
+                            source = %src,
+                            "LTP engine: cancel segment from unknown source, dropping"
+                        );
+                        return;
+                    }
+                }
+            } else {
+                match spans.get(&engine_id) {
+                    Some(s) => s,
+                    None => {
+                        warn!(
+                            engine_id,
+                            session_number = session_id.session_number,
+                            "LTP engine: cancel segment from unknown engine ID, dropping"
+                        );
+                        return;
+                    }
                 }
             };
 
@@ -219,15 +293,30 @@ async fn handle_datagram(data: Bytes, spans: &HashMap<u64, Arc<Span>>, _sink: &A
             ..
         } => {
             let engine_id = session_id.engine_id;
-            let span = match spans.get(&engine_id) {
-                Some(s) => s,
-                None => {
-                    warn!(
-                        engine_id,
-                        session_number = session_id.session_number,
-                        "LTP engine: cancel-ack from unknown engine ID, dropping"
-                    );
-                    return;
+            let span = if engine_id == local_engine_id {
+                match find_span_by_source(spans, src) {
+                    Some(s) => s,
+                    None => {
+                        warn!(
+                            engine_id,
+                            session_number = session_id.session_number,
+                            source = %src,
+                            "LTP engine: cancel-ack from unknown source, dropping"
+                        );
+                        return;
+                    }
+                }
+            } else {
+                match spans.get(&engine_id) {
+                    Some(s) => s,
+                    None => {
+                        warn!(
+                            engine_id,
+                            session_number = session_id.session_number,
+                            "LTP engine: cancel-ack from unknown engine ID, dropping"
+                        );
+                        return;
+                    }
                 }
             };
 

@@ -43,17 +43,19 @@ use crate::config::SpanConfig;
 /// caller (e.g., via a tokio timer).
 #[derive(Debug)]
 pub struct AggregationBuffer {
-    /// Accumulated length-prefixed bundle data.
+    /// Accumulated bundle data (with or without length prefixes).
     buffer: BytesMut,
     /// Maximum aggregated block size in bytes before flushing.
     aggr_size_limit: usize,
     /// Number of bundles currently in the buffer.
     bundle_count: usize,
+    /// Block framing mode.
+    framing: crate::config::BlockFraming,
 }
 
 impl AggregationBuffer {
-    /// Create a new aggregation buffer with the given size limit.
-    pub fn new(aggr_size_limit: usize) -> Self {
+    /// Create a new aggregation buffer with the given size limit and framing mode.
+    pub fn new(aggr_size_limit: usize, framing: crate::config::BlockFraming) -> Self {
         // Cap pre-allocation at 64KB to avoid excessive memory use for very
         // large configured limits (or usize::MAX used in tests).
         let prealloc = aggr_size_limit.min(65536);
@@ -61,28 +63,62 @@ impl AggregationBuffer {
             buffer: BytesMut::with_capacity(prealloc),
             aggr_size_limit,
             bundle_count: 0,
+            framing,
         }
     }
 
     /// Append a bundle to the aggregation buffer.
     ///
     /// Returns `Some(block)` if a flush occurred, `None` otherwise.
+    ///
+    /// In `BlockFraming::None` mode, each bundle is immediately returned as
+    /// its own block (no aggregation, no length prefix). The buffer is used
+    /// only transiently.
     pub fn append(&mut self, bundle: &[u8]) -> Option<Bytes> {
-        let framed_len = 4 + bundle.len();
+        match self.framing {
+            crate::config::BlockFraming::None => {
+                // Raw mode: each bundle is its own block, no length prefix.
+                // If there's already data in the buffer (shouldn't happen in
+                // normal flow), flush it first.
+                let flushed = self.flush();
 
-        let flushed =
-            if !self.buffer.is_empty() && self.buffer.len() + framed_len > self.aggr_size_limit {
-                self.flush()
-            } else {
-                None
-            };
+                // Put the raw bundle directly and flush immediately.
+                self.buffer.reserve(bundle.len());
+                self.buffer.put_slice(bundle);
+                self.bundle_count += 1;
 
-        self.buffer.reserve(framed_len);
-        self.buffer.put_u32(bundle.len() as u32);
-        self.buffer.put_slice(bundle);
-        self.bundle_count += 1;
+                // In raw mode we always want to flush immediately, but we
+                // return the previous flush if there was one. The caller
+                // will get this bundle on the next flush_aggregation_buffer call.
+                // Actually, let's just return the bundle directly:
+                if flushed.is_some() {
+                    // Edge case: there was leftover data. Return that first;
+                    // the current bundle stays in buffer for next flush.
+                    flushed
+                } else {
+                    // Normal case: flush the bundle we just added.
+                    self.flush()
+                }
+            }
+            crate::config::BlockFraming::LengthPrefixed => {
+                let framed_len = 4 + bundle.len();
 
-        flushed
+                let flushed = if !self.buffer.is_empty()
+                    && self.buffer.len() + framed_len > self.aggr_size_limit
+                {
+                    self.flush()
+                } else {
+                    None
+                };
+
+                self.buffer.reserve(framed_len);
+                self.buffer.put_u32(bundle.len() as u32);
+                self.buffer.put_slice(bundle);
+                self.bundle_count += 1;
+
+                flushed
+            }
+        }
     }
 
     /// Flush the current buffer and return it as frozen `Bytes`.
@@ -529,7 +565,7 @@ impl Span {
             None => 0,
         };
         Self {
-            aggregation: std::sync::Mutex::new(AggregationBuffer::new(config.aggr_size_limit)),
+            aggregation: std::sync::Mutex::new(AggregationBuffer::new(config.aggr_size_limit, config.framing)),
             session_counter: AtomicU64::new(1),
             export_sessions: Mutex::new(HashMap::new()),
             import_sessions: Mutex::new(HashMap::new()),
@@ -2224,7 +2260,7 @@ impl Span {
             "delivering block"
         );
 
-        let result = crate::block::unpack_block(block);
+        let result = crate::block::unpack_block(block, self.config.framing);
 
         if let Some(ref err) = result.error {
             warn!(
@@ -2330,7 +2366,7 @@ mod tests {
 
     #[test]
     fn new_buffer_is_empty() {
-        let buf = AggregationBuffer::new(1024);
+        let buf = AggregationBuffer::new(1024, crate::config::BlockFraming::LengthPrefixed);
         assert!(buf.is_empty());
         assert_eq!(buf.len(), 0);
         assert_eq!(buf.bundle_count(), 0);
@@ -2338,13 +2374,13 @@ mod tests {
 
     #[test]
     fn flush_empty_returns_none() {
-        let mut buf = AggregationBuffer::new(1024);
+        let mut buf = AggregationBuffer::new(1024, crate::config::BlockFraming::LengthPrefixed);
         assert_eq!(buf.flush(), None);
     }
 
     #[test]
     fn append_single_bundle() {
-        let mut buf = AggregationBuffer::new(1024);
+        let mut buf = AggregationBuffer::new(1024, crate::config::BlockFraming::LengthPrefixed);
         let bundle = b"hello";
 
         let flushed = buf.append(bundle);
@@ -2356,7 +2392,7 @@ mod tests {
 
     #[test]
     fn append_multiple_bundles_within_limit() {
-        let mut buf = AggregationBuffer::new(1024);
+        let mut buf = AggregationBuffer::new(1024, crate::config::BlockFraming::LengthPrefixed);
         let b1 = b"hello";
         let b2 = b"world";
 
@@ -2369,7 +2405,7 @@ mod tests {
 
     #[test]
     fn flush_returns_correct_framing() {
-        let mut buf = AggregationBuffer::new(1024);
+        let mut buf = AggregationBuffer::new(1024, crate::config::BlockFraming::LengthPrefixed);
         buf.append(b"abc");
         buf.append(b"defgh");
 
@@ -2387,7 +2423,7 @@ mod tests {
 
     #[test]
     fn append_triggers_flush_on_size_limit() {
-        let mut buf = AggregationBuffer::new(20);
+        let mut buf = AggregationBuffer::new(20, crate::config::BlockFraming::LengthPrefixed);
 
         let b1 = [0u8; 10];
         assert!(buf.append(&b1).is_none());
@@ -2408,7 +2444,7 @@ mod tests {
 
     #[test]
     fn append_does_not_flush_when_exactly_at_limit() {
-        let mut buf = AggregationBuffer::new(18);
+        let mut buf = AggregationBuffer::new(18, crate::config::BlockFraming::LengthPrefixed);
 
         assert!(buf.append(b"hello").is_none());
         assert!(buf.append(b"world").is_none());
@@ -2419,7 +2455,7 @@ mod tests {
 
     #[test]
     fn append_flushes_when_exceeding_limit() {
-        let mut buf = AggregationBuffer::new(17);
+        let mut buf = AggregationBuffer::new(17, crate::config::BlockFraming::LengthPrefixed);
 
         assert!(buf.append(b"hello").is_none());
         let flushed = buf.append(b"world");
@@ -2431,7 +2467,7 @@ mod tests {
 
     #[test]
     fn single_large_bundle_exceeding_limit() {
-        let mut buf = AggregationBuffer::new(10);
+        let mut buf = AggregationBuffer::new(10, crate::config::BlockFraming::LengthPrefixed);
         let large = [0xABu8; 16];
 
         let flushed = buf.append(&large);
@@ -2442,7 +2478,7 @@ mod tests {
 
     #[test]
     fn multiple_flushes_in_sequence() {
-        let mut buf = AggregationBuffer::new(12);
+        let mut buf = AggregationBuffer::new(12, crate::config::BlockFraming::LengthPrefixed);
 
         assert!(buf.append(&[1, 2, 3, 4]).is_none());
 
@@ -2460,7 +2496,7 @@ mod tests {
 
     #[test]
     fn framing_format_is_big_endian() {
-        let mut buf = AggregationBuffer::new(65536);
+        let mut buf = AggregationBuffer::new(65536, crate::config::BlockFraming::LengthPrefixed);
         let bundle = [0u8; 256];
         buf.append(&bundle);
 
@@ -2471,7 +2507,7 @@ mod tests {
 
     #[test]
     fn empty_bundle_is_valid() {
-        let mut buf = AggregationBuffer::new(1024);
+        let mut buf = AggregationBuffer::new(1024, crate::config::BlockFraming::LengthPrefixed);
         buf.append(b"");
 
         let block = buf.flush().unwrap();
