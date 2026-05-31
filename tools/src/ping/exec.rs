@@ -28,6 +28,7 @@ async fn exec_async(args: &Command) -> anyhow::Result<ExitCode> {
     }
 
     let node_ids = [args.node_id()?].as_slice().try_into().unwrap();
+    let local_node_eid: hardy_bpv7::eid::Eid = args.node_id()?.into();
     let bpa = std::sync::Arc::new(
         hardy_bpa::bpa::Bpa::builder()
             .status_reports(false)
@@ -37,16 +38,17 @@ async fn exec_async(args: &Command) -> anyhow::Result<ExitCode> {
             .map_err(|e| anyhow::anyhow!("Failed to build BPA: {e}"))?,
     );
 
-    // Add a default 'drop' route for bundles we can't route (e.g., responses
-    // to our own status reports). Low priority so it doesn't override real routes.
+    // Default route: forward all bundles via the local node EID.
+    // When the TCPCLv4 session establishes, the remote BPA registers as a peer
+    // for our node ID (ipn:N.0), creating route ipn:N.* → Forward to peer.
+    // The Via(ipn:N.0) resolves through that route, forwarding everything
+    // to the connected BPA which handles final routing.
     bpa.register_routing_agent(
         "ping".to_string(),
         std::sync::Arc::new(hardy_bpa::routes::StaticRoutingAgent::new(&[(
             "*:**".parse().unwrap(),
-            hardy_bpa::routes::Action::Drop(Some(
-                hardy_bpv7::status_report::ReasonCode::NoKnownRouteToDestinationFromHere,
-            )),
-            10000,
+            hardy_bpa::routes::Action::Via(local_node_eid.clone()),
+            100,
         )])),
     )
     .await
@@ -131,30 +133,6 @@ async fn exec_builtin_cla(
     // The TCPCLv4 session registers the remote BPA as a peer with its node ID.
     // TODO: This should be a proper wait/notification mechanism
     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-
-    // Add a route for the destination that forwards via the connected peer.
-    // The TCPCLv4 session registered the remote BPA (which has the same node ID
-    // as us in the common case) as a peer with route ipn:N.* → Forward.
-    // We add a Via route for the destination's node that resolves through
-    // the peer's node ID route.
-    let dest_node: NodeId = args.destination.clone().try_to_node_id().map_err(|_| {
-        anyhow::anyhow!(
-            "Invalid destination EID {} for ping service",
-            args.destination
-        )
-    })?;
-    let local_node_eid: hardy_bpv7::eid::Eid = args.node_id()?.into();
-
-    bpa.register_routing_agent(
-        "ping-target".to_string(),
-        std::sync::Arc::new(hardy_bpa::routes::StaticRoutingAgent::new(&[(
-            dest_node.into(),
-            hardy_bpa::routes::Action::Via(local_node_eid),
-            1,
-        )])),
-    )
-    .await
-    .map_err(|e| anyhow::anyhow!("Failed to add route: {e}"))?;
 
     run_ping(args, bpa).await
 }
