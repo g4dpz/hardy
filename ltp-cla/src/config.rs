@@ -8,6 +8,26 @@
 
 use std::net::SocketAddr;
 
+/// Block framing mode for bundle encapsulation within LTP blocks.
+///
+/// Controls how bundles are packed into and unpacked from LTP client service
+/// data blocks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "kebab-case"))]
+pub enum BlockFraming {
+    /// Each bundle is preceded by a 4-byte big-endian length prefix.
+    /// Multiple bundles may be aggregated into a single LTP block.
+    /// This is Hardy's native format for Hardy-to-Hardy communication.
+    #[default]
+    LengthPrefixed,
+
+    /// The LTP block contains exactly one raw bundle with no framing.
+    /// This is the standard format used by ION and other implementations
+    /// per RFC 5326 with BPv7 (one bundle per block, no length prefix).
+    None,
+}
+
 /// Top-level configuration for an LTP CLA instance.
 ///
 /// Maps to the `clas` entry in the Hardy configuration file:
@@ -170,6 +190,15 @@ pub struct SpanConfig {
     #[cfg_attr(feature = "serde", serde(default))]
     pub node_ids: Vec<String>,
 
+    /// Block framing mode (default: `length-prefixed`).
+    ///
+    /// Use `"none"` for interoperability with ION and other implementations
+    /// that send one raw bundle per LTP block without length-prefix framing.
+    /// Use `"length-prefixed"` for Hardy-to-Hardy communication where multiple
+    /// bundles may be aggregated into a single LTP block.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub framing: BlockFraming,
+
     /// Enable timer suspension on TVR link events (default: true).
     ///
     /// When enabled, all active retransmission and inactivity timers are
@@ -281,6 +310,7 @@ impl Default for SpanConfig {
             purge_on_link_down: false,
             ping_interval_secs: 0,
             node_ids: Vec::new(),
+            framing: BlockFraming::default(),
             tvr_timer_suspension: default_true(),
             link_down_queue_max_bytes: default_link_down_queue_max_bytes(),
             tvr_rate_update: default_true(),
