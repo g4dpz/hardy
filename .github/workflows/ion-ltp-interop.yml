@@ -1,0 +1,61 @@
+name: ION LTP Interoperability Tests
+
+on:
+  push:
+    branches: ["main"]
+    paths:
+      - "ltp/**"
+      - "ltp-cla/**"
+      - "bpa/**"
+      - "tests/interop/ION-LTP/**"
+      - ".github/workflows/ion-ltp-interop.yml"
+  pull_request:
+    branches: ["main"]
+    paths:
+      - "ltp/**"
+      - "ltp-cla/**"
+      - "bpa/**"
+      - "tests/interop/ION-LTP/**"
+      - ".github/workflows/ion-ltp-interop.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ion-ltp-interop-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  ion-ltp-interop:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ion-ltp-interop
+
+      - name: Install Protoc
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Cache Docker layers
+        uses: actions/cache@v4
+        with:
+          path: /tmp/.buildx-cache
+          key: ${{ runner.os }}-buildx-ion-ltp-${{ hashFiles('tests/interop/ION-LTP/docker/Dockerfile') }}
+          restore-keys: |
+            ${{ runner.os }}-buildx-ion-ltp-
+
+      - name: Run ION LTP interop tests
+        run: ./tests/interop/ION-LTP/test_ion_ltp_ping.sh
