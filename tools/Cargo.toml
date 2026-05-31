@@ -38,6 +38,14 @@ tracing = { version = "0.1", default-features = false }
 tracing-subscriber = "0.3"
 trace-err = "1"
 
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1", features = ["rt-multi-thread", "time", "signal", "process", "macros"] }
+hardy-bpa = { version = "0.1", path = "../bpa" }
+hardy-bpv7 = { version = "0.5", path = "../bpv7", features = ["std"] }
+hardy-tcpclv4 = { version = "0.3", path = "../tcpclv4" }
+time = "0.3"
+
 # --- Linux-specific dependencies ---
 [target.'cfg(target_os = "linux")'.dependencies]
 caps = "0.5"

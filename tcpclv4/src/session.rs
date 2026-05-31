@@ -115,6 +115,15 @@ where
     }
 
     #[cfg_attr(feature = "instrument", instrument(skip(self)))]
+    /// Handle an incoming XFER_SEGMENT message, automatically reassembling
+    /// multi-segment transfers into complete bundles.
+    ///
+    /// Segments are accumulated in `self.ingress_bundle` until the END flag is
+    /// received, at which point the complete bundle is dispatched to the BPA.
+    /// This reassembly is transparent to callers — they receive complete bundles
+    /// regardless of how many XFER_SEGMENT messages were used to transfer them.
+    /// The total transfer size is validated against `self.transfer_mru` (the
+    /// Transfer_MRU advertised in our SESS_INIT).
     async fn on_transfer(&mut self, msg: codec::TransferSegmentMessage) -> Result<(), Error> {
         if msg.message_flags.start {
             if self.ingress_bundle.is_some() {
@@ -294,6 +303,14 @@ where
         }
     }
 
+    /// Send a single bundle to the peer, automatically segmenting into multiple
+    /// XFER_SEGMENT messages if the bundle exceeds the negotiated `segment_mtu`.
+    ///
+    /// The `segment_mtu` is negotiated during SESS_INIT as `min(local_mtu, peer_segment_mru)`
+    /// (RFC 9174 Section 4.3). This ensures that each XFER_SEGMENT payload fits within
+    /// the peer's advertised Segment_MRU. Bundles of any size (up to the peer's
+    /// Transfer_MRU) are handled transparently — callers do not need to perform
+    /// manual segmentation.
     #[cfg_attr(feature = "instrument", instrument(skip(self, bundle)))]
     async fn send_once(
         &mut self,
@@ -307,7 +324,9 @@ where
         let mut start = true;
         let mut cumulative_acknowledged_length = 0usize;
 
-        // Segment if needed
+        // Segment the bundle into chunks of at most `segment_mtu` bytes.
+        // This satisfies RFC 9174 Section 5.2.1: each XFER_SEGMENT must not
+        // exceed the peer's Segment_MRU advertised in SESS_INIT.
         while bundle.len() > self.segment_mtu {
             let segment = bundle.split_to(self.segment_mtu);
             cumulative_acknowledged_length += segment.len();

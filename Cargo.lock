@@ -2280,6 +2280,7 @@ dependencies = [
  "humantime",
  "libc",
  "rand 0.10.1",
+ "tempfile",
  "time",
  "tokio",
  "tokio-util",
