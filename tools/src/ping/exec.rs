@@ -27,16 +27,17 @@ async fn exec_async(args: &Command) -> anyhow::Result<ExitCode> {
         );
     }
 
-    // Use a unique node ID for the embedded BPA (different from the main BPA)
-    // so that TCPCLv4 peer registration creates a useful route.
-    // The source EID's node (e.g., ipn:1.0) is the main BPA's node ID.
-    // We use a high node number (u32::MAX - 1) as the embedded BPA's identity
-    // to avoid conflicts.
+    // Use both the source's node ID (for bundle validation) and a unique
+    // high node number (for TCPCLv4 peer differentiation).
+    let source_node_id = args.node_id()?;
     let ping_node_id = hardy_bpv7::eid::NodeId::Ipn(hardy_bpv7::eid::IpnNodeId {
         allocator_id: 0,
         node_number: u32::MAX - 1,
     });
-    let node_ids = [ping_node_id].as_slice().try_into().unwrap();
+    let node_ids = [source_node_id, ping_node_id]
+        .as_slice()
+        .try_into()
+        .unwrap();
     let bpa = std::sync::Arc::new(
         hardy_bpa::bpa::Bpa::builder()
             .status_reports(false)
