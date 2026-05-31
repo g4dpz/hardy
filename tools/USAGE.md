@@ -18,13 +18,13 @@ Transfer files between a macOS machine and a Linux machine using Bundle Protocol
 
 ## Prerequisites
 
-Build the workspace on both machines:
+Build the workspace on both machines with the LTP feature enabled:
 
 ```bash
-cargo build --release
+cargo build --release -p hardy-tools -p hardy-bpa-server --features hardy-bpa-server/ltp
 ```
 
-Binaries: `target/release/bp` and `target/release/bpa-server`.
+Binaries: `target/release/bp` and `target/release/hardy-bpa-server`.
 
 Ensure UDP port 1113 is open in both directions between the machines.
 
