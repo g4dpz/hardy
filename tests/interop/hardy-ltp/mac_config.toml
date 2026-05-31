@@ -1,0 +1,36 @@
+log-level = "info"
+status-reports = true
+node-ids = "ipn:1.0"
+
+[built-in-services]
+echo = [7]
+
+[storage.metadata]
+type = "memory"
+
+[storage.bundle]
+type = "memory"
+
+[[clas]]
+name = "tcp0"
+type = "tcpclv4"
+address = "[::]:4560"
+
+[[clas]]
+name = "ltp0"
+type = "ltp"
+bind = "[::]:1113"
+engine-id = 1
+client-service-id = 1
+
+[[clas.spans]]
+engine-id = 2
+address = "192.168.2.32:1114"
+node-ids = ["ipn:2.0"]
+max-segment-size = 1400
+max-retransmissions = 5
+retransmit-cycle-secs = 5
+aggr-size-limit = 65536
+aggr-time-limit-secs = 0
+max-import-sessions = 100
+max-export-sessions = 100
